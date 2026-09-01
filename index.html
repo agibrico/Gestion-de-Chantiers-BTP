@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>AGB CHANTIER — Solution SaaS Professionnelle BTP</title>
+    <meta name="description" content="Solution SaaS professionnelle de gestion, pilotage, contrôle et suivi des chantiers de construction par AGB Enterprise." />
+    
+    <!-- PWA & Mobile Web App Meta -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icon-192.svg" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#0F172A" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="AGB CHANTIER" />
+    <meta name="application-name" content="AGB CHANTIER" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- Open Graph Meta -->
+    <meta property="og:title" content="AGB CHANTIER — Solution SaaS BTP" />
+    <meta property="og:description" content="Gestion, suivi et pilotage de chantiers de construction. Installable sur toutes plateformes." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Enregistrement du Service Worker PWA
+      if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').then((registration) => {
+            console.log('[AGB PWA] Service Worker actif:', registration.scope);
+          }).catch((err) => {
+            console.log('[AGB PWA] Enregistrement SW optionnel:', err);
+          });
+        });
+      }
+    </script>
+  </body>
+</html>
+

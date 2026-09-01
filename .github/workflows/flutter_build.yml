@@ -1,0 +1,63 @@
+name: AGB CHANTIER Production Build
+
+on:
+  push:
+    tags:
+      - 'v*' # Déclenché lors de la création d'un tag version (ex: v1.0.0)
+  workflow_dispatch: # Permet de lancer manuellement depuis l'onglet Actions
+
+jobs:
+  build:
+    name: Build & Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Generate Code (Isar & Bloc)
+        run: flutter pub run build_runner build --delete-conflicting-outputs
+
+      - name: Build Release APK (Obfuscated)
+        run: |
+          flutter build apk --release --obfuscate --split-debug-info=build/app/outputs/symbols
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: build/app/outputs/flutter-apk/app-release.apk
+          name: AGB CHANTIER Release ${{ github.ref_name }}
+          body: |
+            Version officielle de production pour AGB CHANTIER.
+            - Compilation optimisée
+            - Obfuscation active
+            - Sécurisation des données (Axe 28)
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Artifact (Manual Build)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: agb-chantier-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
