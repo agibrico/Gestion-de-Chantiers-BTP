@@ -32,6 +32,7 @@ import {
   Layers,
   FileText,
   Boxes,
+  QrCode,
 } from "lucide-react";
 
 const CATEGORY_NAMES: Record<MaterialCategory, string> = {

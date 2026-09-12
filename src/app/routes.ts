@@ -50,9 +50,9 @@ export interface NavItem {
 }
 
 export const MAIN_NAV_ITEMS: NavItem[] = [
-  { key: "overview", label: "Architecture", route: AppRoutes.OVERVIEW, iconName: "Layers" },
-  { key: "design_system", label: "Design System", route: AppRoutes.DESIGN_SYSTEM, iconName: "Palette" },
-  { key: "dashboard", label: "Chantiers", route: AppRoutes.PROJECTS, iconName: "HardHat" },
+  { key: "dashboard", label: "Tableau de Bord", route: AppRoutes.DASHBOARD, iconName: "LayoutDashboard" },
+  { key: "projects", label: "Chantiers", route: AppRoutes.PROJECTS, iconName: "HardHat" },
   { key: "planning", label: "Planning", route: AppRoutes.PLANNING, iconName: "Calendar" },
   { key: "finances", label: "Finances", route: AppRoutes.FINANCE, iconName: "Coins" },
+  { key: "overview", label: "Architecture", route: AppRoutes.OVERVIEW, iconName: "Layers" },
 ];
