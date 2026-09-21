@@ -41,6 +41,7 @@ interface ProjectDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   onEdit: (project: ProjectEntity) => void;
+  initialTab?: "overview" | "phases" | "financials" | "team" | "technical";
 }
 
 const TYPE_CONFIGS: Record<string, { label: string; variant: BadgeVariant }> = {
@@ -66,9 +67,16 @@ export const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
   isOpen,
   onClose,
   onEdit,
+  initialTab = "overview",
 }) => {
   const { updateProgress, addPhase, deletePhase, addMilestone, deleteMilestone } = useProjects();
-  const [activeTab, setActiveTab] = useState<"overview" | "phases" | "financials" | "team" | "technical">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "phases" | "financials" | "team" | "technical">(initialTab || "overview");
+
+  React.useEffect(() => {
+    if (isOpen && initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
 
   // New Phase State
   const [showAddPhase, setShowAddPhase] = useState(false);
@@ -514,33 +522,58 @@ export const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
               )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {project.milestones?.map((m) => (
-                  <div
-                    key={m.id}
-                    className="p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs"
-                  >
-                    <div>
-                      <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                        {m.status === "VALIDE" ? (
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                        ) : (
-                          <Clock className="w-3.5 h-3.5 text-orange-500" />
-                        )}
-                        {m.title}
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        Date cible : {m.targetDate} {m.completedDate ? `(Validé le ${m.completedDate})` : ""}
-                      </div>
-                    </div>
+                {project.milestones?.map((m) => {
+                  const todayStr = new Date().toISOString().split("T")[0];
+                  const isOverdue =
+                    m.status === "EN_RETARD" ||
+                    (!m.completedDate && m.status !== "VALIDE" && m.targetDate < todayStr);
+                  const overdueDays = isOverdue
+                    ? Math.max(1, Math.ceil((new Date().getTime() - new Date(m.targetDate).getTime()) / (1000 * 3600 * 24)))
+                    : 0;
 
-                    <button
-                      onClick={() => deleteMilestone(project.id, m.id)}
-                      className="text-slate-400 hover:text-red-500 p-1"
+                  return (
+                    <div
+                      key={m.id}
+                      className={`p-3 rounded-xl border flex items-center justify-between text-xs transition-all ${
+                        isOverdue
+                          ? "bg-red-50/70 dark:bg-red-950/40 border-red-300 dark:border-red-800 ring-1 ring-red-400/20"
+                          : "bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800"
+                      }`}
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
+                      <div className="min-w-0 pr-2">
+                        <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 truncate">
+                          {m.status === "VALIDE" ? (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                          ) : isOverdue ? (
+                            <AlertTriangle className="w-3.5 h-3.5 text-red-600 dark:text-red-400 shrink-0 animate-pulse" />
+                          ) : (
+                            <Clock className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+                          )}
+                          <span className="truncate">{m.title}</span>
+                          {isOverdue && (
+                            <span className="shrink-0 text-[9px] font-black uppercase tracking-wider bg-red-600 text-white px-1.5 py-0.2 rounded">
+                              Dépassé (+{overdueDays}j)
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5 flex items-center gap-2">
+                          <span>Date cible : {m.targetDate} {m.completedDate ? `(Validé le ${m.completedDate})` : ""}</span>
+                          {m.isCritical && (
+                            <span className="text-red-500 font-bold">• Jalon Critique</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => deleteMilestone(project.id, m.id)}
+                        className="text-slate-400 hover:text-red-500 p-1 shrink-0"
+                        title="Supprimer ce jalon"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>

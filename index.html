@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>AGB CHANTIER — Solution SaaS Professionnelle BTP</title>
-    <meta name="description" content="Solution SaaS professionnelle de gestion, pilotage, contrôle et suivi des chantiers de construction par AGB Enterprise." />
+    <title>AGB CHANTIER — Gestion de Chantiers BTP</title>
+    <meta name="description" content="Application professionnelle de gestion, suivi, contrôle et pilotage des chantiers de construction." />
     
     <!-- PWA & Mobile Web App Meta -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -18,10 +18,28 @@
     <meta name="mobile-web-app-capable" content="yes" />
 
     <!-- Open Graph Meta -->
-    <meta property="og:title" content="AGB CHANTIER — Solution SaaS BTP" />
-    <meta property="og:description" content="Gestion, suivi et pilotage de chantiers de construction. Installable sur toutes plateformes." />
+    <meta property="og:title" content="AGB CHANTIER — Gestion de Chantiers BTP" />
+    <meta property="og:description" content="Application professionnelle de gestion, suivi, contrôle et pilotage des chantiers de construction." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <!-- Détection précoce du thème (Système / Préférences) pour éviter tout flash blanc/sombre (FOUC) -->
+    <script>
+      (function() {
+        try {
+          var stored = localStorage.getItem('agb_chantier_theme_mode');
+          var mode = stored ? JSON.parse(stored) : 'system';
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var isDark = mode === 'dark' || (mode === 'system' && prefersDark);
+          if (isDark) {
+            document.documentElement.classList.add('dark');
+            document.documentElement.style.colorScheme = 'dark';
+          } else {
+            document.documentElement.classList.remove('dark');
+            document.documentElement.style.colorScheme = 'light';
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

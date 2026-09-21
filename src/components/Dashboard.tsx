@@ -36,11 +36,34 @@ import {
   Maximize2,
   Minimize2,
   Tablet,
+  HardDrive,
+  Wifi,
+  WifiOff,
+  ShieldAlert,
+  ChevronDown,
+  ChevronUp,
+  FileSpreadsheet,
+  History,
 } from "lucide-react";
 import { ProjectEntity, ProjectType, ProjectStatus, ProjectRiskLevel } from "../features/projects/domain/entities/project_entity";
 import { ProjectRepositoryImpl } from "../features/projects/data/project_repository_impl";
 import { ProjectFormModal } from "../features/projects/presentation/project_form_modal";
 import { ProjectDetailModal } from "../features/projects/presentation/project_detail_modal";
+import { DashboardQuickSearchBar } from "./DashboardQuickSearchBar";
+import { offlineCacheService } from "../core/pwa/offline_cache_service";
+import { OfflineDataModal } from "../core/pwa/offline_data_modal";
+import {
+  analyzeAllProjectsMilestoneAlerts,
+  DashboardMilestoneAlertsSummary,
+} from "../features/planning/domain/milestone_alert_helper";
+import { MilestoneOverdueNotificationBadge } from "./MilestoneOverdueNotificationBadge";
+import { MilestoneAlertsBanner } from "./MilestoneAlertsBanner";
+import { MilestoneAlertsDrawerModal } from "./MilestoneAlertsDrawerModal";
+import { BtpCsvExportModal } from "../features/reporting/presentation/BtpCsvExportModal";
+import { downloadBtpDashboardCsv } from "../features/reporting/domain/btp_dashboard_csv_service";
+import { useToast } from "../core/widgets/feedback/app_toast";
+import { useFeatures } from "../core/features/feature_toggle_context";
+import { logActivity } from "../core/activity/activity_log_service";
 
 export interface DashboardProps {
   onNavigateToProjects?: () => void;
@@ -607,10 +630,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [projects, setProjects] = useState<ProjectEntity[]>(FALLBACK_PROJECTS);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [selectedFilter, setSelectedFilter] = useState<"ALL" | "ACTIFS" | "RETARD" | "PREPARATION" | "LIVRES">("ALL");
+  const [selectedFilter, setSelectedFilter] = useState<"ALL" | "ACTIFS" | "RETARD" | "PREPARATION" | "LIVRES" | "JALONS_DEPASSEES">("ALL");
   const [selectedType, setSelectedType] = useState<string>("ALL");
   const [selectedProjectForDetail, setSelectedProjectForDetail] = useState<ProjectEntity | null>(null);
+  const [detailModalInitialTab, setDetailModalInitialTab] = useState<"overview" | "phases" | "financials" | "team" | "technical">("overview");
+  const [isMilestoneDrawerOpen, setIsMilestoneDrawerOpen] = useState<boolean>(false);
   const [isFormModalOpen, setIsFormModalOpen] = useState<boolean>(false);
+  const [isOfflineModalOpen, setIsOfflineModalOpen] = useState<boolean>(false);
+  const [isCsvModalOpen, setIsCsvModalOpen] = useState<boolean>(false);
+  const { showToast } = useToast();
+  const { isFeatureEnabled, openCustomizer } = useFeatures();
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [fullscreenWidget, setFullscreenWidget] = useState<
     "KPI_ACTIFS" | "KPI_RETARD" | "KPI_BUDGET" | "CHANTIERS_LIST" | "DASHBOARD_ALL" | null
@@ -653,7 +682,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [fullscreenWidget]);
 
-  // Chargement des données réelles depuis le Repository avec fallback sécurisé
+  // Chargement des données réelles depuis le Repository avec synchronisation Service Worker
   const loadProjectsData = async () => {
     setIsLoading(true);
     try {
@@ -661,12 +690,29 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const loaded = await repo.getAllProjects();
       if (loaded && loaded.length > 0) {
         setProjects(loaded);
+        // Synchroniser automatiquement avec le Service Worker pour le mode déconnecté du chef de chantier
+        offlineCacheService.syncMainDataSnapshot(loaded).catch(() => {});
       } else {
-        setProjects(FALLBACK_PROJECTS);
+        // Tenter de récupérer depuis le cache offline du Service Worker
+        const swSnapshot = await offlineCacheService.getCachedSnapshot();
+        if (swSnapshot && swSnapshot.projects && swSnapshot.projects.length > 0) {
+          setProjects(swSnapshot.projects);
+        } else {
+          setProjects(FALLBACK_PROJECTS);
+        }
       }
     } catch {
-      // Fallback si IndexedDB est en cours d'init ou environnement test
-      setProjects(FALLBACK_PROJECTS);
+      // Fallback résilient via Service Worker Cache API ou données statiques de secours
+      try {
+        const swSnapshot = await offlineCacheService.getCachedSnapshot();
+        if (swSnapshot && swSnapshot.projects && swSnapshot.projects.length > 0) {
+          setProjects(swSnapshot.projects);
+        } else {
+          setProjects(FALLBACK_PROJECTS);
+        }
+      } catch {
+        setProjects(FALLBACK_PROJECTS);
+      }
     } finally {
       setIsLoading(false);
       setLastRefreshed(new Date());
@@ -714,45 +760,81 @@ export const Dashboard: React.FC<DashboardProps> = ({
     return p.phases?.some((ph) => ph.status === "RETARDEE") ? 28 : 14;
   };
 
-  // Calcul des Indicateurs Clés Demandés
+  // Analyse en temps réel des dates charnières dépassées (jalons et phases de planning)
+  const milestoneAlertsSummary = useMemo(() => {
+    return analyzeAllProjectsMilestoneAlerts(projects);
+  }, [projects]);
+
+  // Ouverture ciblée de la modale détail directement sur l'onglet Phases & Jalons
+  const handleOpenProjectPhases = (projectId: string) => {
+    const targetProject = projects.find((p) => p.id === projectId);
+    if (targetProject) {
+      setSelectedProjectForDetail(targetProject);
+      setDetailModalInitialTab("phases");
+    }
+  };
+
+  // Chantiers filtrés spécifiquement pour le calcul des indicateurs (KPIs)
+  const indicatorProjects = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return projects;
+    return projects.filter((p) => {
+      const matchesCode = p.code.toLowerCase().includes(q);
+      const matchesName = p.name.toLowerCase().includes(q);
+      const matchesCity = p.location?.city?.toLowerCase().includes(q);
+      const matchesClient = p.clientName?.toLowerCase().includes(q);
+      const matchesManager = p.managementTeam?.siteManagerName?.toLowerCase().includes(q);
+      return matchesCode || matchesName || matchesCity || matchesClient || matchesManager;
+    });
+  }, [projects, searchQuery]);
+
+  // Calcul des Indicateurs Clés Demandés (alimentés par indicatorProjects pour filtrage en temps réel)
   const stats = useMemo(() => {
+    const isFiltered = searchQuery.trim().length > 0;
+    const targetProjects = indicatorProjects;
+
     // 1. Projets Actifs
-    const activeProjectsList = projects.filter((p) => p.status === "EN_COURS");
+    const activeProjectsList = targetProjects.filter((p) => p.status === "EN_COURS");
     const activeProjectsCount = activeProjectsList.length;
 
     // 2. Retard
-    const delayedProjectsList = projects.filter((p) => isProjectDelayed(p));
+    const delayedProjectsList = targetProjects.filter((p) => isProjectDelayed(p));
     const delayedProjectsCount = delayedProjectsList.length;
     const maxDelayDays = delayedProjectsList.reduce((max, p) => Math.max(max, getProjectDelayDays(p)), 0);
 
     // 3. Budget Total
-    const totalContractedBudget = projects.reduce((sum, p) => sum + (p.totalBudgetContracted || 0), 0);
-    const totalExpensesRealized = projects.reduce((sum, p) => sum + (p.totalExpensesRealized || 0), 0);
-    const totalBilled = projects.reduce((sum, p) => sum + (p.totalBilledAmount || 0), 0);
+    const totalContractedBudget = targetProjects.reduce((sum, p) => sum + (p.totalBudgetContracted || 0), 0);
+    const totalExpensesRealized = targetProjects.reduce((sum, p) => sum + (p.totalExpensesRealized || 0), 0);
+    const totalBilled = targetProjects.reduce((sum, p) => sum + (p.totalBilledAmount || 0), 0);
     const budgetConsumptionRate =
       totalContractedBudget > 0 ? Math.round((totalExpensesRealized / totalContractedBudget) * 100) : 0;
 
     // Métriques complémentaires de chantier
-    const totalWorkers = projects.reduce((sum, p) => sum + (p.metrics?.workersOnSiteToday || 0), 0);
+    const totalWorkers = targetProjects.reduce((sum, p) => sum + (p.metrics?.workersOnSiteToday || 0), 0);
     const averageProgress =
-      projects.length > 0
-        ? Math.round(projects.reduce((sum, p) => sum + (p.progressPercentage || 0), 0) / projects.length)
+      targetProjects.length > 0
+        ? Math.round(targetProjects.reduce((sum, p) => sum + (p.progressPercentage || 0), 0) / targetProjects.length)
         : 0;
 
-    const preparationProjectsCount = projects.filter((p) => p.status === "ETUDE_PREPARATION").length;
-    const completedProjectsCount = projects.filter(
+    const preparationProjectsCount = targetProjects.filter((p) => p.status === "ETUDE_PREPARATION").length;
+    const completedProjectsCount = targetProjects.filter(
       (p) => p.status === "RECEPTIONNE" || p.status === "CLOTURE"
     ).length;
-    const highRiskProjectsCount = projects.filter(
+    const highRiskProjectsCount = targetProjects.filter(
       (p) => p.riskLevel === "ELEVE"
     ).length;
 
+    const singleMatchedProject = isFiltered && targetProjects.length === 1 ? targetProjects[0] : null;
+
     return {
+      isFiltered,
+      singleMatchedProject,
+      matchedProjectsCount: targetProjects.length,
       totalProjects: projects.length,
       activeProjectsCount,
       activePercentage: projects.length > 0 ? Math.round((activeProjectsCount / projects.length) * 100) : 0,
       delayedProjectsCount,
-      delayedPercentage: projects.length > 0 ? Math.round((delayedProjectsCount / projects.length) * 100) : 0,
+      delayedPercentage: targetProjects.length > 0 ? Math.round((delayedProjectsCount / targetProjects.length) * 100) : 0,
       maxDelayDays,
       delayedProjectsList,
       totalContractedBudget,
@@ -765,7 +847,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       completedProjectsCount,
       highRiskProjectsCount,
     };
-  }, [projects]);
+  }, [projects, indicatorProjects, searchQuery]);
 
   // Filtrage des chantiers
   const filteredProjects = useMemo(() => {
@@ -785,6 +867,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
         matchesStatus = p.status === "EN_COURS";
       } else if (selectedFilter === "RETARD") {
         matchesStatus = isProjectDelayed(p);
+      } else if (selectedFilter === "JALONS_DEPASSEES") {
+        matchesStatus = !!milestoneAlertsSummary.alertsByProjectId[p.id]?.hasOverdueMilestones;
       } else if (selectedFilter === "PREPARATION") {
         matchesStatus = p.status === "ETUDE_PREPARATION";
       } else if (selectedFilter === "LIVRES") {
@@ -796,49 +880,33 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
       return matchesSearch && matchesStatus && matchesType;
     });
-  }, [projects, searchQuery, selectedFilter, selectedType]);
+  }, [projects, searchQuery, selectedFilter, selectedType, milestoneAlertsSummary]);
 
-  // Export CSV de la vue d'ensemble
+  // Export CSV complet du reporting BTP (personnalisable via modale ou direct)
   const handleExportCsv = () => {
-    const headers = [
-      "Code Chantier",
-      "Nom du Projet",
-      "Statut",
-      "Retard Détecté",
-      "Délai Retard (jours)",
-      "Avancement (%)",
-      "Budget Total (FCFA)",
-      "Dépenses Réalisées (FCFA)",
-      "Client",
-      "Ville",
-      "Conducteur de Travaux",
-      "Effectif Chantier",
-    ];
+    setIsCsvModalOpen(true);
+  };
 
-    const rows = filteredProjects.map((p) => [
-      `"${p.code}"`,
-      `"${p.name.replace(/"/g, '""')}"`,
-      `"${p.status}"`,
-      isProjectDelayed(p) ? '"OUI"' : '"NON"',
-      getProjectDelayDays(p),
-      p.progressPercentage,
-      p.totalBudgetContracted,
-      p.totalExpensesRealized,
-      `"${p.clientName.replace(/"/g, '""')}"`,
-      `"${p.location.city}"`,
-      `"${p.managementTeam.siteManagerName}"`,
-      p.metrics?.workersOnSiteToday || 0,
-    ]);
+  const handleQuickExportCsv = () => {
+    const filename = downloadBtpDashboardCsv(filteredProjects, milestoneAlertsSummary, {
+      filterName: selectedFilter,
+      searchQuery,
+      includeKpiSummary: true,
+      includeMilestonesDetail: true,
+    });
+    showToast("success", "Rapport BTP exporté avec succès", filename);
 
-    const csvContent = [headers.join(";"), ...rows.map((r) => r.join(";"))].join("\n");
-    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `agb_vue_ensemble_chantiers_${new Date().toISOString().split("T")[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    logActivity({
+      category: "EXPORT",
+      title: "Export CSV BTP rapide",
+      description: `Génération immédiate du rapport de reporting (${filteredProjects.length} chantiers).`,
+      metadata: {
+        filename,
+        itemCount: filteredProjects.length,
+        filter: selectedFilter,
+        exportFormat: "CSV",
+      },
+    });
   };
 
   const handleCreateProjectSuccess = async (newProject: any) => {
@@ -876,6 +944,26 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
           <div className="flex flex-wrap items-center gap-2.5">
             <button
+              id="btn-customize-dashboard"
+              onClick={() => openCustomizer("widgets")}
+              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl bg-orange-50 dark:bg-orange-950/40 hover:bg-orange-100 dark:hover:bg-orange-900/60 text-orange-800 dark:text-orange-300 transition-colors border border-orange-200 dark:border-orange-800/80 cursor-pointer shadow-2xs"
+              title="Personnaliser et activer/désactiver les indicateurs et widgets du tableau de bord"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 text-orange-600 dark:text-orange-400" />
+              <span>Widgets</span>
+            </button>
+
+            <button
+              id="btn-activity-log-dashboard"
+              onClick={() => openCustomizer("history")}
+              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors border border-slate-200 dark:border-slate-700 cursor-pointer"
+              title="Consulter l'historique d'activité et les exports récents"
+            >
+              <History className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" />
+              <span>Historique</span>
+            </button>
+
+            <button
               id="btn-fullscreen-dashboard"
               onClick={() => handleEnterFullscreen("DASHBOARD_ALL")}
               className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl bg-orange-50 dark:bg-orange-950/40 hover:bg-orange-100 dark:hover:bg-orange-900/40 text-orange-700 dark:text-orange-300 transition-colors border border-orange-200 dark:border-orange-800/60 cursor-pointer"
@@ -895,14 +983,28 @@ export const Dashboard: React.FC<DashboardProps> = ({
               Actualiser
             </button>
 
-            <button
-              onClick={handleExportCsv}
-              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors border border-slate-200 dark:border-slate-700 cursor-pointer"
-              title="Exporter les indicateurs en CSV"
-            >
-              <Download className="w-3.5 h-3.5 text-slate-500" />
-              Exporter Synthèse
-            </button>
+            {isFeatureEnabled("widget_offline_cache") && (
+              <button
+                onClick={() => setIsOfflineModalOpen(true)}
+                className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 transition-colors border border-emerald-200 dark:border-emerald-800/60 cursor-pointer"
+                title="Consulter et synchroniser le cache Service Worker pour le terrain"
+              >
+                <HardDrive className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Cache Terrain (SW)</span>
+              </button>
+            )}
+
+            {isFeatureEnabled("widget_csv_export") && (
+              <button
+                id="btn-export-csv-btp"
+                onClick={handleExportCsv}
+                className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 transition-colors border border-emerald-200 dark:border-emerald-800/80 cursor-pointer shadow-2xs"
+                title="Exporter les données du tableau de bord au format CSV pour le reporting BTP (Ctrl+E)"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Export CSV BTP</span>
+              </button>
+            )}
 
             <button
               onClick={() => setIsFormModalOpen(true)}
@@ -915,36 +1017,67 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
+      {/* 1.5. BARRE DE RECHERCHE RAPIDE POUR FILTRER LES INDICATEURS PAR NOM OU NUMÉRO DE CHANTIER */}
+      {isFeatureEnabled("widget_quick_search") && (
+        <DashboardQuickSearchBar
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          projects={projects}
+          matchedProjectsCount={stats.matchedProjectsCount}
+          totalProjectsCount={stats.totalProjects}
+          onSelectProject={(p) => setSearchQuery(p.code)}
+          onResetSearch={() => setSearchQuery("")}
+        />
+      )}
+
       {/* 2. LES 3 INDICATEURS CLÉS FONDAMENTAUX (PROJETS ACTIFS, RETARD, BUDGET TOTAL) */}
-      <motion.div
-        variants={kpiContainerVariants}
-        initial="hidden"
-        animate="visible"
-        className="grid grid-cols-1 md:grid-cols-3 gap-5"
-      >
-        {/* INDICATEUR 1 : PROJETS ACTIFS */}
+      {(isFeatureEnabled("widget_kpi_actifs") ||
+        isFeatureEnabled("widget_kpi_retards") ||
+        isFeatureEnabled("widget_kpi_budget")) && (
         <motion.div
-          id="kpi-projets-actifs"
-          variants={kpiCardVariants}
-          whileHover={{ y: -4, transition: { duration: 0.2 } }}
-          className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/90 dark:border-slate-800 p-5 shadow-xs hover:border-blue-300 dark:hover:border-blue-700/60 transition-all group"
+          variants={kpiContainerVariants}
+          initial="hidden"
+          animate="visible"
+          className="grid grid-cols-1 md:grid-cols-3 gap-5"
         >
+          {/* INDICATEUR 1 : PROJETS ACTIFS */}
+          {isFeatureEnabled("widget_kpi_actifs") && (
+            <motion.div
+              id="kpi-projets-actifs"
+              variants={kpiCardVariants}
+              whileHover={{ y: -4, transition: { duration: 0.2 } }}
+              className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/90 dark:border-slate-800 p-5 shadow-xs hover:border-blue-300 dark:hover:border-blue-700/60 transition-all group"
+            >
           <div className="flex items-start justify-between">
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded">
-                  Chantiers en Cours
+                  {stats.isFiltered
+                    ? stats.singleMatchedProject
+                      ? `Indicateur : ${stats.singleMatchedProject.code}`
+                      : `${stats.matchedProjectsCount} Chantiers Filtrés`
+                    : "Chantiers en Cours"}
                 </span>
               </div>
               <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 mt-1">
-                Projets Actifs
+                {stats.singleMatchedProject ? stats.singleMatchedProject.name : "Projets Actifs"}
               </h3>
               <div className="flex items-baseline gap-2 mt-2">
                 <span className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white tabular-nums">
-                  {stats.activeProjectsCount}
+                  {stats.singleMatchedProject
+                    ? stats.singleMatchedProject.status === "EN_COURS"
+                      ? "Actif"
+                      : stats.singleMatchedProject.status === "ETUDE_PREPARATION"
+                      ? "Études"
+                      : "Réceptionné"
+                    : stats.activeProjectsCount}
                 </span>
                 <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">
-                  / {stats.totalProjects} chantiers au total
+                  {stats.singleMatchedProject
+                    ? `• Phase travaux ${stats.singleMatchedProject.progressPercentage}%`
+                    : `/ ${stats.matchedProjectsCount} chantier${stats.matchedProjectsCount > 1 ? "s" : ""}${
+                        stats.isFiltered ? " filtré" + (stats.matchedProjectsCount > 1 ? "s" : "") : " au total"
+                      }`}
                 </span>
               </div>
             </div>
@@ -967,46 +1100,91 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>
 
+          {/* Notification visuelle contextuelle sur les chantiers actifs avec dérives */}
+          {milestoneAlertsSummary.totalProjectsWithOverdueMilestones > 0 && (
+            <div className="mt-3 flex items-center justify-between text-xs bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 px-3 py-1.5 rounded-xl border border-amber-200 dark:border-amber-900/60">
+              <span className="flex items-center gap-1.5 font-semibold">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                {milestoneAlertsSummary.totalProjectsWithOverdueMilestones} chantier(s) avec jalon dépassé
+              </span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedFilter("JALONS_DEPASSEES");
+                }}
+                className="font-bold underline hover:text-amber-900 dark:hover:text-amber-100 cursor-pointer text-[11px]"
+              >
+                Filtrer
+              </button>
+            </div>
+          )}
+
           <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-xs">
             <span className="text-slate-600 dark:text-slate-400 flex items-center gap-1.5 font-medium">
               <Users className="w-3.5 h-3.5 text-blue-500" />
-              {stats.totalWorkers} ouvriers mobilisés
+              {stats.totalWorkers} ouvrier{stats.totalWorkers > 1 ? "s" : ""} mobilisé{stats.totalWorkers > 1 ? "s" : ""}
             </span>
             <span className="font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded">
-              {stats.activePercentage}% du portefeuille
+              {stats.singleMatchedProject
+                ? `${stats.singleMatchedProject.progressPercentage}% avancement`
+                : `${stats.activePercentage}% du portefeuille`}
             </span>
           </div>
         </motion.div>
+      )}
 
-        {/* INDICATEUR 2 : RETARD */}
-        <motion.div
-          id="kpi-retard"
-          variants={kpiCardVariants}
-          whileHover={{ y: -4, transition: { duration: 0.2 } }}
-          className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/90 dark:border-slate-800 p-5 shadow-xs hover:border-amber-300 dark:hover:border-amber-700/60 transition-all group"
-        >
+        {/* INDICATEUR 2 : RETARD & DATES CHARNIÈRES */}
+        {isFeatureEnabled("widget_kpi_retards") && (
+          <motion.div
+            id="kpi-retard"
+            variants={kpiCardVariants}
+            whileHover={{ y: -4, transition: { duration: 0.2 } }}
+            className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/90 dark:border-slate-800 p-5 shadow-xs hover:border-amber-300 dark:hover:border-amber-700/60 transition-all group relative overflow-hidden"
+          >
           <div className="flex items-start justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <span className={`text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                  stats.delayedProjectsCount > 0
+                <span className={`text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded flex items-center gap-1.5 ${
+                  stats.delayedProjectsCount > 0 || milestoneAlertsSummary.totalOverdueMilestonesCount > 0
                     ? "text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/60"
                     : "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60"
                 }`}>
-                  {stats.delayedProjectsCount > 0 ? "Alerte Délais BTP" : "Planning Maîtrisé"}
+                  {milestoneAlertsSummary.totalOverdueMilestonesCount > 0 && (
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                    </span>
+                  )}
+                  {stats.delayedProjectsCount > 0
+                    ? stats.singleMatchedProject
+                      ? `Alerte Retard : ${stats.singleMatchedProject.code}`
+                      : "Alerte Délais BTP"
+                    : stats.singleMatchedProject
+                    ? `Planning Conforme : ${stats.singleMatchedProject.code}`
+                    : "Planning Maîtrisé"}
                 </span>
               </div>
               <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 mt-1">
-                Chantiers en Retard
+                {stats.singleMatchedProject ? "Délais & Jalons Chantier" : "Chantiers en Retard"}
               </h3>
               <div className="flex items-baseline gap-2 mt-2">
                 <span className={`text-3xl sm:text-4xl font-black tabular-nums ${
                   stats.delayedProjectsCount > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"
                 }`}>
-                  {stats.delayedProjectsCount}
+                  {stats.singleMatchedProject
+                    ? stats.delayedProjectsCount > 0
+                      ? `+${stats.maxDelayDays} j`
+                      : "0 j"
+                    : stats.delayedProjectsCount}
                 </span>
                 <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">
-                  {stats.delayedProjectsCount > 1 ? "chantiers impactés" : "chantier impacté"}
+                  {stats.singleMatchedProject
+                    ? stats.delayedProjectsCount > 0
+                      ? "de dépassement planning"
+                      : "aucun retard détecté"
+                    : stats.delayedProjectsCount > 1
+                    ? "chantiers impactés"
+                    : "chantier impacté"}
                 </span>
               </div>
             </div>
@@ -1024,7 +1202,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <Maximize2 className="w-4 h-4" />
               </button>
               <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform ${
-                stats.delayedProjectsCount > 0
+                stats.delayedProjectsCount > 0 || milestoneAlertsSummary.totalOverdueMilestonesCount > 0
                   ? "bg-red-50 dark:bg-red-950/50 text-red-600 dark:text-red-400"
                   : "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400"
               }`}>
@@ -1033,37 +1211,90 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>
 
+          {/* NOTIFICATION VISUELLE CONTEXTUELLE DÉTAILLÉE : DATES CHARNIÈRES DÉPASSÉES */}
+          {milestoneAlertsSummary.totalOverdueMilestonesCount > 0 && (
+            <div className="mt-3 p-3 rounded-xl bg-red-50/90 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-red-700 dark:text-red-300 flex items-center gap-1.5">
+                  <ShieldAlert className="w-4 h-4 text-red-600 shrink-0" />
+                  {milestoneAlertsSummary.totalOverdueMilestonesCount} date(s) charnière(s) dépassée(s)
+                </span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsMilestoneDrawerOpen(true);
+                  }}
+                  className="text-[11px] font-bold text-red-700 dark:text-red-300 hover:underline cursor-pointer bg-white dark:bg-slate-900 px-2 py-0.5 rounded border border-red-200 dark:border-red-800"
+                >
+                  Voir registre &rarr;
+                </button>
+              </div>
+
+              {/* Badges cliquables des 3 premiers chantiers impactés */}
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {milestoneAlertsSummary.projectsWithAlerts.slice(0, 3).map((pAlert) => (
+                  <button
+                    key={pAlert.projectId}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenProjectPhases(pAlert.projectId);
+                    }}
+                    className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 hover:text-red-600 border border-red-200 dark:border-red-800/80 cursor-pointer shadow-2xs"
+                    title={`Ouvrir les phases de ${pAlert.projectCode}`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                    <span>{pAlert.projectCode}</span>
+                    <span className="text-red-600 dark:text-red-400">({pAlert.overdueItems.length} jalon{pAlert.overdueItems.length > 1 ? "s" : ""})</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-xs">
             <span className="text-slate-600 dark:text-slate-400 flex items-center gap-1.5 font-medium">
               <Clock className="w-3.5 h-3.5 text-amber-500" />
-              Retard max : {stats.maxDelayDays} jours
+              Retard max : {stats.maxDelayDays} jour{stats.maxDelayDays > 1 ? "s" : ""}
             </span>
-            <button
-              onClick={() => setSelectedFilter("RETARD")}
-              className="font-bold text-red-600 dark:text-red-400 hover:underline flex items-center gap-0.5 cursor-pointer"
-            >
-              Voir les alertes
-              <ChevronRight className="w-3 h-3" />
-            </button>
+            {stats.delayedProjectsCount > 0 || milestoneAlertsSummary.totalOverdueMilestonesCount > 0 ? (
+              <button
+                onClick={() => setSelectedFilter("JALONS_DEPASSEES")}
+                className="font-bold text-red-600 dark:text-red-400 hover:underline flex items-center gap-0.5 cursor-pointer"
+              >
+                Filtrer par jalons
+                <ChevronRight className="w-3 h-3" />
+              </button>
+            ) : (
+              <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" />
+                Jalons respectés
+              </span>
+            )}
           </div>
         </motion.div>
+      )}
 
         {/* INDICATEUR 3 : BUDGET TOTAL */}
-        <motion.div
-          id="kpi-budget-total"
-          variants={kpiCardVariants}
-          whileHover={{ y: -4, transition: { duration: 0.2 } }}
-          className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/90 dark:border-slate-800 p-5 shadow-xs hover:border-emerald-300 dark:hover:border-emerald-700/60 transition-all group"
-        >
+        {isFeatureEnabled("widget_kpi_budget") && (
+          <motion.div
+            id="kpi-budget-total"
+            variants={kpiCardVariants}
+            whileHover={{ y: -4, transition: { duration: 0.2 } }}
+            className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/90 dark:border-slate-800 p-5 shadow-xs hover:border-emerald-300 dark:hover:border-emerald-700/60 transition-all group"
+          >
           <div className="flex items-start justify-between">
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded">
-                  Marchés BTP Signés
+                  {stats.singleMatchedProject
+                    ? `Budget : ${stats.singleMatchedProject.code}`
+                    : stats.isFiltered
+                    ? "Budget Filtré"
+                    : "Marchés BTP Signés"}
                 </span>
               </div>
               <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 mt-1">
-                Budget Total Contracté
+                {stats.singleMatchedProject ? "Montant Marché Chantier" : "Budget Total Contracté"}
               </h3>
               <div className="mt-2">
                 <p className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tabular-nums tracking-tight">
@@ -1090,6 +1321,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>
 
+          {/* Alerte contextuelle sur risque d'incidence financière et pénalités journalières */}
+          {milestoneAlertsSummary.totalOverdueMilestonesCount > 0 && (
+            <div className="mt-3 flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1.5 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
+              <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <span className="truncate">Risque pénalités : {milestoneAlertsSummary.totalOverdueMilestonesCount} date(s) charnière(s) sous surveillance</span>
+            </div>
+          )}
+
           <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-xs">
             <span className="text-slate-600 dark:text-slate-400 flex items-center gap-1.5 font-medium">
               <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
@@ -1100,52 +1339,65 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </span>
           </div>
         </motion.div>
+      )}
       </motion.div>
+    )}
 
-      {/* 3. BANNIÈRE D'ALERTE DES CHANTIERS EN RETARD SI DÉTECTÉS */}
-      {stats.delayedProjectsCount > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, delay: 0.35, ease: "easeOut" }}
-          className="bg-amber-500/10 border border-amber-500/30 dark:border-amber-500/20 rounded-2xl p-5"
-        >
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <div className="p-2 rounded-xl bg-amber-500 text-white shrink-0 mt-0.5">
-                <AlertCircle className="w-5 h-5" />
-              </div>
-              <div>
-                <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                  Attention requise : {stats.delayedProjectsCount} chantier(s) en retard sur le planning cible
-                </h4>
-                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-                  Des pénalités de retard ou des blocages d'approvisionnement nécessitent un arbitrage de la Direction des Travaux.
-                </p>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {stats.delayedProjectsList.map((dp) => (
-                    <button
-                      key={dp.id}
-                      onClick={() => setSelectedProjectForDetail(dp)}
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700/50 text-slate-800 dark:text-slate-200 hover:bg-amber-100/50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-                    >
-                      <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                      {dp.code} : {dp.name} (+{getProjectDelayDays(dp)}j)
-                    </button>
-                  ))}
+      {/* 3. BANNIÈRE PRINCIPALE D'ALERTE DES DATES CHARNIÈRES DÉPASSÉES */}
+      {isFeatureEnabled("widget_milestone_banner") &&
+        (milestoneAlertsSummary.totalOverdueMilestonesCount > 0 ? (
+          <MilestoneAlertsBanner
+            alertsSummary={milestoneAlertsSummary}
+            onFilterOverdue={() =>
+              setSelectedFilter(selectedFilter === "JALONS_DEPASSEES" ? "ALL" : "JALONS_DEPASSEES")
+            }
+            onSelectProject={handleOpenProjectPhases}
+            onOpenDetailModal={() => setIsMilestoneDrawerOpen(true)}
+            isFilterActive={selectedFilter === "JALONS_DEPASSEES"}
+          />
+        ) : stats.delayedProjectsCount > 0 ? (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.45, delay: 0.35, ease: "easeOut" }}
+            className="bg-amber-500/10 border border-amber-500/30 dark:border-amber-500/20 rounded-2xl p-5"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-xl bg-amber-500 text-white shrink-0 mt-0.5">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Attention requise : {stats.delayedProjectsCount} chantier(s) en retard sur le planning cible
+                  </h4>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                    Des pénalités de retard ou des blocages d'approvisionnement nécessitent un arbitrage de la Direction des Travaux.
+                  </p>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {stats.delayedProjectsList.map((dp) => (
+                      <button
+                        key={dp.id}
+                        onClick={() => setSelectedProjectForDetail(dp)}
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700/50 text-slate-800 dark:text-slate-200 hover:bg-amber-100/50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                      >
+                        <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                        {dp.code} : {dp.name} (+{getProjectDelayDays(dp)}j)
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
+              <button
+                onClick={() => setSelectedFilter("RETARD")}
+                className="text-xs font-bold text-amber-700 dark:text-amber-400 hover:underline shrink-0 flex items-center gap-1 cursor-pointer self-start sm:self-center"
+              >
+                Isoler les chantiers en retard
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
             </div>
-            <button
-              onClick={() => setSelectedFilter("RETARD")}
-              className="text-xs font-bold text-amber-700 dark:text-amber-400 hover:underline shrink-0 flex items-center gap-1 cursor-pointer self-start sm:self-center"
-            >
-              Isoler les chantiers en retard
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </motion.div>
-      )}
+          </motion.div>
+        ) : null)}
 
       {/* 4. SECTION PRINCIPALE : VUE D'ENSEMBLE DES CHANTIERS */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-6">
@@ -1196,6 +1448,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 }`}
               >
                 En retard ({stats.delayedProjectsCount})
+              </button>
+              <button
+                onClick={() => setSelectedFilter("JALONS_DEPASSEES")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  selectedFilter === "JALONS_DEPASSEES"
+                    ? "bg-red-600 text-white shadow-xs"
+                    : "text-slate-600 dark:text-slate-400 hover:text-red-600"
+                }`}
+              >
+                <span>Jalons Dépassés ({milestoneAlertsSummary.totalProjectsWithOverdueMilestones})</span>
+                {milestoneAlertsSummary.totalOverdueMilestonesCount > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" />
+                )}
               </button>
               <button
                 onClick={() => setSelectedFilter("PREPARATION")}
@@ -1295,6 +1560,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {filteredProjects.map((project) => {
               const delayed = isProjectDelayed(project);
               const delayDays = getProjectDelayDays(project);
+              const milestoneAlert = milestoneAlertsSummary.alertsByProjectId[project.id];
+              const hasOverdueMilestones = !!milestoneAlert?.hasOverdueMilestones;
               const financialRatio =
                 project.totalBudgetContracted > 0
                   ? Math.round((project.totalExpensesRealized / project.totalBudgetContracted) * 100)
@@ -1304,7 +1571,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <div
                   key={project.id}
                   className={`rounded-2xl border transition-all hover:shadow-md bg-white dark:bg-slate-900 p-5 flex flex-col justify-between relative ${
-                    delayed
+                    hasOverdueMilestones
+                      ? "border-red-300 dark:border-red-800/80 bg-gradient-to-br from-red-50/15 via-white to-amber-50/10 dark:from-red-950/20 dark:via-slate-900 dark:to-slate-900 ring-1 ring-red-400/20"
+                      : delayed
                       ? "border-red-300 dark:border-red-900/60 bg-red-50/10"
                       : "border-slate-200 dark:border-slate-800"
                   }`}
@@ -1334,8 +1603,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           </span>
                         )}
 
-                        {/* Alerte de retard mise en avant */}
-                        {delayed && (
+                        {/* Alerte de retard globale */}
+                        {delayed && !hasOverdueMilestones && (
                           <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-md bg-red-100 text-red-700 dark:bg-red-950/80 dark:text-red-300 border border-red-300 dark:border-red-800 flex items-center gap-1">
                             <AlertTriangle className="w-3 h-3" />
                             Retard (+{delayDays}j)
@@ -1357,6 +1626,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       Client : <span className="font-semibold text-slate-700 dark:text-slate-300">{project.clientName}</span>
                     </p>
 
+                    {/* NOTIFICATION VISUELLE CONTEXTUELLE DU JALON / DATE CHARNIÈRE DÉPASSÉE */}
+                    {hasOverdueMilestones && (
+                      <div className="mt-2.5">
+                        <MilestoneOverdueNotificationBadge
+                          alertInfo={milestoneAlert}
+                          onOpenProjectPhases={handleOpenProjectPhases}
+                        />
+                      </div>
+                    )}
+
                     {/* Avancement physique */}
                     <div className="mt-4 space-y-1.5">
                       <div className="flex items-center justify-between text-xs font-semibold">
@@ -1371,7 +1650,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <div className="w-full h-2.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                         <div
                           className={`h-full rounded-full transition-all duration-500 ${
-                            delayed
+                            hasOverdueMilestones || delayed
                               ? "bg-amber-500"
                               : project.progressPercentage >= 100
                               ? "bg-emerald-500"
@@ -1414,6 +1693,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           onOpenChantierDetail(project.id);
                         } else {
                           setSelectedProjectForDetail(project);
+                          setDetailModalInitialTab("overview");
                         }
                       }}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-orange-50 dark:hover:bg-orange-950/40 text-slate-700 dark:text-slate-200 hover:text-orange-600 dark:hover:text-orange-400 font-semibold transition-colors cursor-pointer shrink-0"
@@ -1434,16 +1714,49 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <ProjectDetailModal
           project={selectedProjectForDetail}
           isOpen={!!selectedProjectForDetail}
-          onClose={() => setSelectedProjectForDetail(null)}
+          onClose={() => {
+            setSelectedProjectForDetail(null);
+            setDetailModalInitialTab("overview");
+          }}
           onEdit={() => {}}
+          initialTab={detailModalInitialTab}
         />
       )}
+
+      {/* 5b. MODAL DU REGISTRE DES DATES CHARNIÈRES DÉPASSÉES */}
+      <MilestoneAlertsDrawerModal
+        isOpen={isMilestoneDrawerOpen}
+        onClose={() => setIsMilestoneDrawerOpen(false)}
+        alertsSummary={milestoneAlertsSummary}
+        onSelectProject={(projectId) => {
+          setIsMilestoneDrawerOpen(false);
+          handleOpenProjectPhases(projectId);
+        }}
+      />
 
       {/* 6. MODAL DE CRÉATION DE NOUVEAU CHANTIER */}
       <ProjectFormModal
         isOpen={isFormModalOpen}
         onClose={() => setIsFormModalOpen(false)}
         onSubmit={handleCreateProjectSuccess}
+      />
+
+      {/* 6b. MODAL DE CONSULTATION & GESTION DU CACHE SERVICE WORKER HORS-LIGNE */}
+      <OfflineDataModal
+        isOpen={isOfflineModalOpen}
+        onClose={() => setIsOfflineModalOpen(false)}
+        projects={projects}
+        onSelectProject={(code) => setSearchQuery(code)}
+      />
+
+      {/* 6c. MODAL D'EXPORTATION CSV DU REPORTING BTP */}
+      <BtpCsvExportModal
+        isOpen={isCsvModalOpen}
+        onClose={() => setIsCsvModalOpen(false)}
+        projects={projects}
+        filteredProjects={filteredProjects}
+        milestoneAlertsSummary={milestoneAlertsSummary}
+        currentFilterName={selectedFilter}
       />
 
       {/* 7. VUE PLEIN ÉCRAN TABLETTE POUR LES WIDGETS DU DASHBOARD */}
@@ -1545,6 +1858,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
           {/* Contenu plein écran avec défilement fluide et ergonomie tablette */}
           <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl w-full mx-auto">
+            {/* Barre de recherche rapide intégrée en mode tablette plein écran */}
+            <DashboardQuickSearchBar
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              projects={projects}
+              matchedProjectsCount={stats.matchedProjectsCount}
+              totalProjectsCount={stats.totalProjects}
+              onSelectProject={(p) => setSearchQuery(p.code)}
+              onResetSearch={() => setSearchQuery("")}
+              isCompact={true}
+            />
+
             {/* VUE 1 : PLEIN ÉCRAN WIDGET PROJETS ACTIFS */}
             {fullscreenWidget === "KPI_ACTIFS" && (
               <div className="space-y-6">
@@ -1790,6 +2115,63 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     </div>
                   )}
                 </div>
+
+                {/* Section Dates Charnières Dépassées en plein écran Tablette */}
+                {milestoneAlertsSummary.totalOverdueMilestonesCount > 0 && (
+                  <div className="bg-red-50/70 dark:bg-red-950/40 rounded-2xl border-2 border-red-300 dark:border-red-800/80 p-6 shadow-xs space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-black text-red-700 dark:text-red-300 flex items-center gap-2">
+                          <ShieldAlert className="w-5 h-5 text-red-600" />
+                          Dates Charnières Dépassées ({milestoneAlertsSummary.totalOverdueMilestonesCount} jalons impactés)
+                        </h3>
+                        <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+                          Points d'arrêt contractuels et jalons critiques nécessitant un réalignement planning immédiat.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          handleExitFullscreen();
+                          setIsMilestoneDrawerOpen(true);
+                        }}
+                        className="px-4 py-2 rounded-xl bg-red-600 text-white font-bold text-xs hover:bg-red-700 transition-colors shadow-xs shrink-0 cursor-pointer flex items-center gap-1.5"
+                      >
+                        Consulter le registre complet
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {milestoneAlertsSummary.projectsWithAlerts.map((pa) => (
+                        <div
+                          key={pa.projectId}
+                          className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-red-200 dark:border-red-900/60 flex items-center justify-between gap-3 shadow-2xs"
+                        >
+                          <div>
+                            <span className="text-[11px] font-mono font-bold text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-900/40 px-2 py-0.5 rounded">
+                              {pa.projectCode}
+                            </span>
+                            <h5 className="text-sm font-bold text-slate-900 dark:text-white mt-1">
+                              {pa.projectName}
+                            </h5>
+                            <p className="text-xs text-red-600 font-semibold mt-0.5">
+                              {pa.overdueItems.length} jalon(s) en dépassement • Retard max: +{pa.maxOverdueDays} j
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => {
+                              handleExitFullscreen();
+                              handleOpenProjectPhases(pa.projectId);
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-950/60 hover:bg-red-100 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800 text-xs font-bold shrink-0 cursor-pointer"
+                          >
+                            Voir planning
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

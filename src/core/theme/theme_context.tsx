@@ -1,5 +1,7 @@
 /**
  * AGB CHANTIER - Contexte de Thème & Préférences Visuelles (Light / Dark / System)
+ * Détecte automatiquement les préférences système du navigateur (prefers-color-scheme)
+ * et bascule l'interface en conséquence en temps réel.
  */
 
 import React, { createContext, useContext, useEffect, useState } from "react";
@@ -7,52 +9,128 @@ import { LocalStorageService } from "../storage/local_storage";
 
 export type ThemeMode = "light" | "dark" | "system";
 
-interface ThemeContextType {
+export interface ThemeContextType {
   themeMode: ThemeMode;
   isDark: boolean;
+  isSystemMode: boolean;
+  systemPrefersDark: boolean;
   setThemeMode: (mode: ThemeMode) => void;
   toggleTheme: () => void;
+  resetToSystem: () => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-const THEME_STORAGE_KEY = "theme_mode";
+export const THEME_STORAGE_KEY = "theme_mode";
+
+/**
+ * Détecte si le navigateur ou l'OS a activé le mode sombre
+ */
+export const getSystemThemePreference = (): boolean => {
+  if (typeof window === "undefined" || !window.matchMedia) {
+    return false;
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+};
+
+/**
+ * Met à jour le DOM (classes Tailwind, color-scheme CSS et meta theme-color)
+ */
+export const applyDomTheme = (dark: boolean): void => {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+
+  if (dark) {
+    root.classList.add("dark");
+    root.style.colorScheme = "dark";
+  } else {
+    root.classList.remove("dark");
+    root.style.colorScheme = "light";
+  }
+
+  // Synchronisation dynamique de la couleur de la barre de statut navigateur / PWA
+  const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+  if (metaThemeColor) {
+    metaThemeColor.setAttribute("content", dark ? "#0F172A" : "#FFFFFF");
+  }
+};
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // Déterminer le mode initial : si aucun mode n'a été enregistré, "system" par défaut
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => {
-    return LocalStorageService.getItem<ThemeMode>(THEME_STORAGE_KEY, "light") || "light";
+    const stored = LocalStorageService.getItem<ThemeMode>(THEME_STORAGE_KEY, null);
+    if (stored === "light" || stored === "dark" || stored === "system") {
+      return stored;
+    }
+    return "system";
   });
 
-  const [isDark, setIsDark] = useState<boolean>(false);
+  // Détecter la préférence système actuelle
+  const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() => {
+    return getSystemThemePreference();
+  });
 
+  // Calculer l'état isDark initial
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    const stored = LocalStorageService.getItem<ThemeMode>(THEME_STORAGE_KEY, null);
+    const mode = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+    const dark = mode === "dark" ? true : mode === "light" ? false : getSystemThemePreference();
+    applyDomTheme(dark);
+    return dark;
+  });
+
+  // Surveillance des changements de préférences système & du mode sélectionné
   useEffect(() => {
-    const updateTheme = () => {
-      let activeIsDark = false;
-      if (themeMode === "dark") {
-        activeIsDark = true;
-      } else if (themeMode === "light") {
-        activeIsDark = false;
-      } else {
-        // System preference
-        activeIsDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-      }
+    const updateActiveTheme = (sysPrefers: boolean = getSystemThemePreference()) => {
+      setSystemPrefersDark(sysPrefers);
+      const activeIsDark =
+        themeMode === "dark"
+          ? true
+          : themeMode === "light"
+          ? false
+          : sysPrefers;
 
       setIsDark(activeIsDark);
-      if (activeIsDark) {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
+      applyDomTheme(activeIsDark);
+    };
+
+    updateActiveTheme();
+
+    if (typeof window === "undefined" || !window.matchMedia) return;
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+    const handleSystemChange = (e: MediaQueryListEvent | MediaQueryList) => {
+      const prefersDark = e.matches;
+      setSystemPrefersDark(prefersDark);
+      // Bascule automatique de l'interface si l'utilisateur est en mode "system"
+      if (themeMode === "system") {
+        setIsDark(prefersDark);
+        applyDomTheme(prefersDark);
       }
     };
 
-    updateTheme();
-
-    if (themeMode === "system") {
-      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-      const handler = () => updateTheme();
-      mediaQuery.addEventListener("change", handler);
-      return () => mediaQuery.removeEventListener("change", handler);
+    try {
+      if (mediaQuery.addEventListener) {
+        mediaQuery.addEventListener("change", handleSystemChange);
+      } else if ((mediaQuery as any).addListener) {
+        (mediaQuery as any).addListener(handleSystemChange);
+      }
+    } catch (e) {
+      console.warn("[ThemeProvider] Impossible d'écouter prefers-color-scheme:", e);
     }
+
+    return () => {
+      try {
+        if (mediaQuery.removeEventListener) {
+          mediaQuery.removeEventListener("change", handleSystemChange);
+        } else if ((mediaQuery as any).removeListener) {
+          (mediaQuery as any).removeListener(handleSystemChange);
+        }
+      } catch (e) {
+        // Nettoyage
+      }
+    };
   }, [themeMode]);
 
   const setThemeMode = (mode: ThemeMode) => {
@@ -60,12 +138,28 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     LocalStorageService.setItem(THEME_STORAGE_KEY, mode);
   };
 
+  const resetToSystem = () => {
+    setThemeMode("system");
+  };
+
   const toggleTheme = () => {
-    setThemeMode(isDark ? "light" : "dark");
+    // Si l'utilisateur clique sur le bouton de bascule rapide, il alterne entre sombre et clair
+    const nextDark = !isDark;
+    setThemeMode(nextDark ? "dark" : "light");
   };
 
   return (
-    <ThemeContext.Provider value={{ themeMode, isDark, setThemeMode, toggleTheme }}>
+    <ThemeContext.Provider
+      value={{
+        themeMode,
+        isDark,
+        isSystemMode: themeMode === "system",
+        systemPrefersDark,
+        setThemeMode,
+        toggleTheme,
+        resetToSystem,
+      }}
+    >
       {children}
     </ThemeContext.Provider>
   );

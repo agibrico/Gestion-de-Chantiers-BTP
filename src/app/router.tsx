@@ -32,14 +32,46 @@ import { HandoverManagementScreen } from "../features/handover/presentation/hand
 import { IntervenantsScreen } from "../features/intervenants/presentation/intervenants_screen";
 import { NotificationsScreen } from "../features/notifications/presentation/notifications_screen";
 import { D3DashboardScreen } from "../features/dashboard_d3/presentation/d3_dashboard_screen";
+import { SettingsAndCustomizationScreen } from "../features/settings/presentation/settings_and_customization_screen";
+import { DeactivatedFeatureNotice } from "../core/features/presentation/DeactivatedFeatureNotice";
+import { useFeatures } from "../core/features/feature_toggle_context";
 import { AppEmptyState } from "../core/widgets/display/app_empty_state";
 import { ArrowLeft, Clock } from "lucide-react";
 import { AppButton } from "../core/widgets/buttons/app_button";
 import { useAuth } from "../features/auth/presentation/auth_context";
 
+const ROUTE_FEATURE_MAP: Record<string, string> = {
+  "/clients": "module_clients",
+  "/projects": "module_projects",
+  "/teams": "module_teams",
+  "/intervenants": "module_teams",
+  "/planning": "module_planning",
+  "/tasks": "module_tasks",
+  "/attendance": "module_attendance",
+  "/inventory": "module_inventory",
+  "/suppliers": "module_suppliers",
+  "/finance": "module_finance",
+  "/equipment": "module_equipment",
+  "/site-diary": "module_site_diary",
+  "/photos": "module_photos",
+  "/quality": "module_quality",
+  "/hse": "module_hse",
+  "/reservations": "module_reservations",
+  "/documents": "module_documents",
+  "/reports": "module_reports",
+  "/reception": "module_reception",
+  "/analytics": "module_analytics_d3",
+  "/dashboard-d3": "module_analytics_d3",
+  "/notifications": "module_notifications",
+  "/qr-scanner": "module_qr_code",
+  "/ai-assistant": "module_ai_assistant",
+  "/audit": "module_audit",
+};
+
 export const AppRouter: React.FC = () => {
   const [showSplash, setShowSplash] = useState(true);
   const { currentUser, isAuthenticated } = useAuth();
+  const { isFeatureEnabled } = useFeatures();
 
   const [currentRoute, setCurrentRoute] = useState<string>(() => {
     if (typeof window !== "undefined" && window.location.hash) {
@@ -79,6 +111,12 @@ export const AppRouter: React.FC = () => {
   };
 
   const renderRouteContent = () => {
+    // Si la route correspond à un module désactivé par l'utilisateur, afficher l'écran explicatif
+    const featureIdForRoute = ROUTE_FEATURE_MAP[currentRoute];
+    if (featureIdForRoute && !isFeatureEnabled(featureIdForRoute)) {
+      return <DeactivatedFeatureNotice route={currentRoute} onNavigate={navigate} />;
+    }
+
     switch (currentRoute) {
       case "/":
       case "/auth/login":
@@ -163,10 +201,12 @@ export const AppRouter: React.FC = () => {
       case "/notifications":
         return <NotificationsScreen onNavigate={navigate} />;
 
+      case "/settings":
+        return <SettingsAndCustomizationScreen onNavigate={navigate} />;
+
       case "/qr-scanner":
       case "/ai-assistant":
       case "/audit":
-      case "/settings":
         return (
           <div className="space-y-6">
             <div className="flex items-center justify-between">

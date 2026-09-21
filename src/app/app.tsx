@@ -10,6 +10,8 @@ import { AuthProvider } from "../features/auth/presentation/auth_context";
 import { ClientsProvider } from "../features/clients/presentation/clients_context";
 import { NotificationsProvider } from "../features/notifications/presentation/notifications_context";
 import { FirstLoginModal } from "../features/auth/presentation/first_login_modal";
+import { FeatureToggleProvider } from "../core/features/feature_toggle_context";
+import { FeatureCustomizerModal } from "../core/features/presentation/FeatureCustomizerModal";
 import { AppRouter } from "./router";
 
 export const App: React.FC = () => {
@@ -20,8 +22,11 @@ export const App: React.FC = () => {
           <AuthProvider>
             <NotificationsProvider>
               <ClientsProvider>
-                <AppRouter />
-                <FirstLoginModal />
+                <FeatureToggleProvider>
+                  <AppRouter />
+                  <FeatureCustomizerModal />
+                  <FirstLoginModal />
+                </FeatureToggleProvider>
               </ClientsProvider>
             </NotificationsProvider>
           </AuthProvider>

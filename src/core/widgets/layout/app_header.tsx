@@ -9,6 +9,7 @@ import React, { useState, useEffect } from "react";
 import {
   Sun,
   Moon,
+  Laptop,
   Wifi,
   WifiOff,
   Menu,
@@ -18,14 +19,18 @@ import {
   Bell,
   Siren,
   Command,
+  SlidersHorizontal,
 } from "lucide-react";
 import { useTheme } from "../../theme/theme_context";
 import { AppIconButton } from "../buttons/app_icon_button";
 import { AppTooltip } from "../feedback/app_tooltip";
 import { useAuth } from "../../../features/auth/presentation/auth_context";
 import { useNotifications } from "../../../features/notifications/presentation/notifications_context";
+import { useFeatures } from "../../features/feature_toggle_context";
 import { GlobalSearchModal } from "../search/global_search_modal";
 import { NotificationsDrawerModal } from "../../../features/notifications/presentation/notifications_drawer_modal";
+import { OfflineDataModal } from "../../pwa/offline_data_modal";
+import { useOfflineDataCache } from "../../pwa/use_offline_data_cache";
 
 interface AppHeaderProps {
   currentRoute: string;
@@ -40,12 +45,15 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   isOnline,
   onToggleMobileMenu,
 }) => {
-  const { isDark, toggleTheme } = useTheme();
+  const { themeMode, isDark, setThemeMode } = useTheme();
   const { currentUser, logout, isAuthenticated } = useAuth();
   const { unreadCount, criticalUnreadCount } = useNotifications();
+  const { cachedProjectsCount, isServiceWorkerActive } = useOfflineDataCache();
+  const { openCustomizer, enabledCount, totalCount } = useFeatures();
 
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isNotifDrawerOpen, setIsNotifDrawerOpen] = useState(false);
+  const [isOfflineModalOpen, setIsOfflineModalOpen] = useState(false);
 
   // Keyboard shortcut Ctrl+K / Cmd+K to open global search
   useEffect(() => {
@@ -192,26 +200,78 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
               </div>
             ) : null}
 
-            {/* Offline Status Badge */}
-            <AppTooltip content={isOnline ? "Système connecté en temps réel aux serveurs" : "Mode Hors-Ligne : Saisies enregistrées dans IndexedDB"}>
-              <div
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold border ${
+            {/* Offline Status Badge & Service Worker Cache Trigger */}
+            <AppTooltip content={isOnline ? "Connecté — Cliquez pour gérer le cache hors-ligne du Service Worker pour le terrain" : "Mode Hors-Ligne Déconnecté — Cliquez pour consulter les données chantiers en cache"}>
+              <button
+                onClick={() => setIsOfflineModalOpen(true)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold border transition-all cursor-pointer hover:scale-105 active:scale-95 ${
                   isOnline
-                    ? "bg-slate-800 text-slate-300 border-slate-700"
-                    : "bg-amber-950/60 text-amber-300 border-amber-800"
+                    ? "bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-slate-700 hover:border-slate-600"
+                    : "bg-amber-950/80 hover:bg-amber-900 text-amber-300 border-amber-800 hover:border-amber-700 animate-pulse"
                 }`}
+                aria-label="Cache Hors-Ligne Chantier"
               >
                 {isOnline ? <Wifi className="w-3.5 h-3.5 text-emerald-400" /> : <WifiOff className="w-3.5 h-3.5 text-amber-400" />}
                 <span className="hidden lg:inline">{isOnline ? "En ligne" : "Hors ligne"}</span>
-              </div>
+                {isServiceWorkerActive && (
+                  <span className="hidden xl:inline-block text-[9px] font-mono font-bold bg-slate-700/80 px-1 py-0.2 rounded text-slate-300">
+                    SW OK
+                  </span>
+                )}
+              </button>
             </AppTooltip>
 
-            {/* Theme toggle */}
+            {/* Bouton de Personnalisation des Options & Modules */}
+            <AppTooltip content={`Personnaliser les modules & options actives (${enabledCount}/${totalCount})`}>
+              <button
+                id="btn-header-customize-options"
+                onClick={() => openCustomizer("categories")}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-orange-500/15 hover:bg-orange-500/25 text-orange-300 border border-orange-500/30 hover:border-orange-400 transition-all cursor-pointer shadow-2xs"
+                aria-label="Personnaliser les options de l'application"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5 text-orange-400" />
+                <span className="hidden sm:inline">Options</span>
+                <span className="text-[9px] font-mono font-bold bg-orange-500/40 px-1 py-0.2 rounded text-orange-200">
+                  {enabledCount}/{totalCount}
+                </span>
+              </button>
+            </AppTooltip>
+
+            {/* Theme toggle : Système (Auto) -> Sombre -> Clair */}
             <AppIconButton
-              icon={isDark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-300" />}
-              onClick={toggleTheme}
-              label={isDark ? "Passer en mode clair" : "Passer en mode sombre"}
-              tooltip={isDark ? "Activer le mode d'affichage clair" : "Activer le mode d'affichage sombre"}
+              icon={
+                themeMode === "system" ? (
+                  <Laptop className="w-4 h-4 text-orange-400" />
+                ) : isDark ? (
+                  <Sun className="w-4 h-4 text-amber-400" />
+                ) : (
+                  <Moon className="w-4 h-4 text-slate-300" />
+                )
+              }
+              onClick={() => {
+                // Cycle : system -> dark -> light -> system
+                if (themeMode === "system") {
+                  setThemeMode(isDark ? "light" : "dark");
+                } else if (themeMode === "dark") {
+                  setThemeMode("light");
+                } else {
+                  setThemeMode("system");
+                }
+              }}
+              label={
+                themeMode === "system"
+                  ? `Système : ${isDark ? "Sombre" : "Clair"}`
+                  : isDark
+                  ? "Mode Sombre"
+                  : "Mode Clair"
+              }
+              tooltip={
+                themeMode === "system"
+                  ? `Thème Système Auto (${isDark ? "Sombre détecté" : "Clair détecté"}) — Cliquez pour basculer`
+                  : isDark
+                  ? "Mode Sombre forcé — Cliquez pour passer en Mode Clair"
+                  : "Mode Clair forcé — Cliquez pour réactiver le Mode Système Auto"
+              }
               variant="ghost"
               size="sm"
               className="text-slate-300 hover:bg-slate-800 hover:text-white"
@@ -232,6 +292,13 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
         isOpen={isNotifDrawerOpen}
         onClose={() => setIsNotifDrawerOpen(false)}
         onNavigate={onNavigate}
+      />
+
+      {/* Offline Service Worker Cache Modal */}
+      <OfflineDataModal
+        isOpen={isOfflineModalOpen}
+        onClose={() => setIsOfflineModalOpen(false)}
+        onSelectProject={() => onNavigate("/projects")}
       />
     </>
   );

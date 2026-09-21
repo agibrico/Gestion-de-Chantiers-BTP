@@ -10,23 +10,38 @@ import { App as EnterprisePortal } from "./app/app";
 import { ThemeProvider, useTheme } from "./core/theme/theme_context";
 import { ToastProvider } from "./core/widgets/feedback/app_toast";
 import { ErrorBoundary } from "./core/widgets/feedback/error_boundary";
+import { LoadingProvider, useLoading } from "./core/widgets/feedback/loading_indicator";
+import {
+  KeyboardShortcutsProvider,
+  useKeyboardShortcuts,
+} from "./core/shortcuts/keyboard_shortcuts";
+import {
+  FeatureToggleProvider,
+  useFeatures,
+} from "./core/features/feature_toggle_context";
+import { FeatureCustomizerModal } from "./core/features/presentation/FeatureCustomizerModal";
 import {
   HardHat,
   LayoutDashboard,
   Layers,
   Sun,
   Moon,
+  Laptop,
   Building2,
   Calendar,
   Coins,
   ExternalLink,
+  Keyboard,
+  SlidersHorizontal,
 } from "lucide-react";
 
 const AppHeaderNav: React.FC<{
   activeView: "dashboard" | "portal";
-  setActiveView: (view: "dashboard" | "portal") => void;
-}> = ({ activeView, setActiveView }) => {
-  const { isDark, toggleTheme } = useTheme();
+  onSelectView: (view: "dashboard" | "portal") => void;
+}> = ({ activeView, onSelectView }) => {
+  const { themeMode, isDark, setThemeMode } = useTheme();
+  const { openShortcutsModal } = useKeyboardShortcuts();
+  const { openCustomizer, enabledCount, totalCount, activePreset } = useFeatures();
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shadow-xs">
@@ -51,45 +66,112 @@ const AppHeaderNav: React.FC<{
           </div>
         </div>
 
-        {/* Sélecteur de Vue : Dashboard Chantiers vs Portail Multi-Modules */}
+        {/* Sélecteur de Vue : Dashboard Chantiers vs Portail Multi-Modules (avec indicateurs de raccourcis clavier) */}
         <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
           <button
             id="nav-tab-dashboard"
-            onClick={() => setActiveView("dashboard")}
+            onClick={() => onSelectView("dashboard")}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
               activeView === "dashboard"
                 ? "bg-white dark:bg-slate-900 text-orange-600 dark:text-orange-400 shadow-xs"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             }`}
+            title="Afficher le Tableau de Bord (Raccourci : Ctrl+D)"
           >
             <LayoutDashboard className="w-3.5 h-3.5" />
             <span>Tableau de Bord</span>
+            <kbd className="hidden lg:inline-flex items-center text-[9px] font-mono px-1 py-0.2 rounded bg-slate-200/80 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-300/60 dark:border-slate-700 font-bold ml-0.5">
+              Ctrl+D
+            </kbd>
           </button>
 
           <button
             id="nav-tab-portal"
-            onClick={() => setActiveView("portal")}
+            onClick={() => onSelectView("portal")}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
               activeView === "portal"
                 ? "bg-white dark:bg-slate-900 text-orange-600 dark:text-orange-400 shadow-xs"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             }`}
+            title="Accéder au Portail Entreprise (Raccourci : Ctrl+P)"
           >
             <Layers className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Portail Entreprise</span>
             <span className="sm:hidden">Portail</span>
+            <kbd className="hidden lg:inline-flex items-center text-[9px] font-mono px-1 py-0.2 rounded bg-slate-200/80 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-300/60 dark:border-slate-700 font-bold ml-0.5">
+              Ctrl+P
+            </kbd>
           </button>
         </div>
 
-        {/* Actions Rapides : Thème & Indicateur */}
+        {/* Actions Rapides : Personnaliser Options, Raccourcis Clavier & Sélecteur de Thème */}
         <div className="flex items-center gap-2">
+          {/* Bouton Personnaliser mes Options / Modules */}
           <button
-            onClick={toggleTheme}
-            className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border border-slate-200/60 dark:border-slate-800 cursor-pointer"
-            title={isDark ? "Passer en mode clair" : "Passer en mode sombre"}
+            id="btn-customize-workspace"
+            onClick={() => openCustomizer("categories")}
+            className="flex items-center gap-1.5 p-1.5 px-2.5 rounded-xl text-slate-700 dark:text-slate-200 bg-orange-50 dark:bg-orange-950/40 hover:bg-orange-100 dark:hover:bg-orange-900/60 transition-colors border border-orange-200 dark:border-orange-800/80 cursor-pointer text-xs font-bold shadow-2xs"
+            title={`Personnaliser les options et modules de l'application (${enabledCount}/${totalCount} actifs, Profil : ${activePreset?.name || "Sur-Mesure"})`}
           >
-            {isDark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600" />}
+            <SlidersHorizontal className="w-3.5 h-3.5 text-orange-600 dark:text-orange-400 shrink-0" />
+            <span className="hidden md:inline">Mes Options</span>
+            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-orange-200/80 dark:bg-orange-900 text-orange-800 dark:text-orange-300 font-extrabold">
+              {enabledCount}/{totalCount}
+            </span>
           </button>
+
+          {/* Bouton Guide Raccourcis Clavier */}
+          <button
+            onClick={openShortcutsModal}
+            className="flex items-center gap-1.5 p-1.5 px-2.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border border-slate-200/80 dark:border-slate-700/60 cursor-pointer text-xs font-medium"
+            title="Guide des Raccourcis Clavier (Ctrl+D, Ctrl+P, Ctrl+E, ?)"
+          >
+            <Keyboard className="w-3.5 h-3.5 text-orange-500 dark:text-orange-400" />
+            <span className="hidden xl:inline text-[11px] font-bold">Raccourcis</span>
+            <kbd className="hidden sm:inline-block text-[9px] font-mono bg-slate-200 dark:bg-slate-800 px-1 rounded text-slate-500">
+              ?
+            </kbd>
+          </button>
+
+          {/* Sélecteur de Thème (Système Auto / Clair / Sombre) */}
+          <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl border border-slate-200/80 dark:border-slate-700/60 text-xs">
+            <button
+              onClick={() => setThemeMode("system")}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                themeMode === "system"
+                  ? "bg-white dark:bg-slate-900 text-orange-600 dark:text-orange-400 shadow-2xs font-bold"
+                  : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              }`}
+              title={`Mode Système Automatique (${isDark ? "Sombre détecté" : "Clair détecté"}) — Bascule selon l'OS`}
+            >
+              <Laptop className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Système</span>
+            </button>
+
+            <button
+              onClick={() => setThemeMode("light")}
+              className={`p-1 px-2 rounded-lg transition-all cursor-pointer ${
+                themeMode === "light"
+                  ? "bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-2xs font-bold"
+                  : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              }`}
+              title="Forcer le Mode Clair"
+            >
+              <Sun className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              onClick={() => setThemeMode("dark")}
+              className={`p-1 px-2 rounded-lg transition-all cursor-pointer ${
+                themeMode === "dark"
+                  ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-2xs font-bold"
+                  : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              }`}
+              title="Forcer le Mode Sombre"
+            >
+              <Moon className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
     </header>
@@ -98,36 +180,65 @@ const AppHeaderNav: React.FC<{
 
 export function MainAppContent() {
   const [activeView, setActiveView] = useState<"dashboard" | "portal">("dashboard");
+  const { triggerViewChangeLoading } = useLoading();
+
+  const handleSelectView = (view: "dashboard" | "portal") => {
+    if (view === activeView) return;
+    triggerViewChangeLoading(300);
+    setActiveView(view);
+  };
+
+  const handleQuickExportCsvFromShortcut = () => {
+    // Si sur le Dashboard, cliquer sur le bouton d'export CSV pour ouvrir la modale
+    const exportBtn = document.getElementById("btn-export-csv-btp");
+    if (exportBtn) {
+      exportBtn.click();
+    } else {
+      // Si sur le portail, basculer vers le Dashboard et déclencher
+      triggerViewChangeLoading(250);
+      setActiveView("dashboard");
+      setTimeout(() => {
+        const btn = document.getElementById("btn-export-csv-btp");
+        if (btn) btn.click();
+      }, 300);
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#0B1120] text-slate-900 dark:text-slate-100 flex flex-col font-sans antialiased selection:bg-orange-500 selection:text-white">
-      {/* Barre de navigation supérieure */}
-      <AppHeaderNav activeView={activeView} setActiveView={setActiveView} />
+    <KeyboardShortcutsProvider
+      activeView={activeView}
+      setActiveView={handleSelectView}
+      onExportCsv={handleQuickExportCsvFromShortcut}
+    >
+      <div className="min-h-screen bg-slate-50 dark:bg-[#0B1120] text-slate-900 dark:text-slate-100 flex flex-col font-sans antialiased selection:bg-orange-500 selection:text-white">
+        {/* Barre de navigation supérieure */}
+        <AppHeaderNav activeView={activeView} onSelectView={handleSelectView} />
 
-      {/* Contenu Actif */}
-      <main className="flex-1 w-full">
-        {activeView === "dashboard" ? (
-          <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
-            <Dashboard
-              onNavigateToProjects={() => {
-                window.location.hash = "/projects";
-                setActiveView("portal");
-              }}
-              onNavigateToPlanning={() => {
-                window.location.hash = "/planning";
-                setActiveView("portal");
-              }}
-              onNavigateToFinance={() => {
-                window.location.hash = "/finance";
-                setActiveView("portal");
-              }}
-            />
-          </div>
-        ) : (
-          <EnterprisePortal />
-        )}
-      </main>
-    </div>
+        {/* Contenu Actif */}
+        <main className="flex-1 w-full">
+          {activeView === "dashboard" ? (
+            <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+              <Dashboard
+                onNavigateToProjects={() => {
+                  window.location.hash = "/projects";
+                  handleSelectView("portal");
+                }}
+                onNavigateToPlanning={() => {
+                  window.location.hash = "/planning";
+                  handleSelectView("portal");
+                }}
+                onNavigateToFinance={() => {
+                  window.location.hash = "/finance";
+                  handleSelectView("portal");
+                }}
+              />
+            </div>
+          ) : (
+            <EnterprisePortal />
+          )}
+        </main>
+      </div>
+    </KeyboardShortcutsProvider>
   );
 }
 
@@ -135,9 +246,14 @@ export default function RootApp() {
   return (
     <ErrorBoundary>
       <ThemeProvider>
-        <ToastProvider>
-          <MainAppContent />
-        </ToastProvider>
+        <LoadingProvider>
+          <ToastProvider>
+            <FeatureToggleProvider>
+              <MainAppContent />
+              <FeatureCustomizerModal />
+            </FeatureToggleProvider>
+          </ToastProvider>
+        </LoadingProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );
