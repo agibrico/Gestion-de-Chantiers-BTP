@@ -1,0 +1,16 @@
+import {test,beforeEach} from 'node:test';
+import assert from 'node:assert/strict';
+import {indexedDB} from 'fake-indexeddb';
+import {IdbAdapter as DB} from '../src/core/storage/idb_adapter';
+import {ProjectScope as Scope} from '../src/features/workspace/project_scope';
+import {saveDossier,validateDossier,DossierInput} from '../src/features/workspace/dossier_service';
+Object.assign(globalThis,{window:{indexedDB}});
+const data=(id:string):DossierInput=>({id,name:'Chantier '+id,type:'BATIMENT_RESIDENTIEL',city:'Abidjan',address:'',clientName:'Client test',clientId:'',phone:'',responsible:'Responsable',start:'2026-09-22',end:'2027-01-01',budget:'1000000',market:'1500000',description:''});
+beforeEach(async()=>{Scope.enabled=false;Scope.select(null);const db=await DB.getDb();await new Promise<void>((resolve,reject)=>{const tx=db.transaction(Object.values(DB.STORES),'readwrite');for(const s of Object.values(DB.STORES))tx.objectStore(s).clear();tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error);});});
+test('dossier rejects invalid dates, amounts and required fields',()=>{for(const change of [{name:''},{budget:'-1'},{market:'NaN'},{end:'2020-01-01'}])assert.throws(()=>validateDossier({...data('a'),...change}));});
+test('new dossier starts with zero real activity and retains initial reference',async()=>{const p=await saveDossier(data('a'),'owner');assert.equal(p.totalExpensesRealized,0);assert.equal(p.progressPercentage,0);assert.deepEqual(p.phases,[]);assert.equal((p as any).initialReference.budget,1000000);});
+test('repeated dossier validation reuses its stable identity',async()=>{await saveDossier(data('a'),'owner');await saveDossier(data('a'),'owner');assert.equal((await DB.getAllUnscoped('projects')).length,1);});
+test('expenses are attached to active project and excluded from another',async()=>{Scope.enabled=true;Scope.select('a');await DB.put('expenses',{id:'e',createdAt:'now',updatedAt:'now'});assert.equal((await DB.getAll<any>('expenses'))[0].projectId,'a');Scope.select('b');assert.equal((await DB.getAll('expenses')).length,0);assert.equal(await DB.getById('expenses','e'),null);});
+test('write with another project or no active project fails',async()=>{Scope.enabled=true;Scope.select('a');await assert.rejects(DB.put('tasks',{id:'t',createdAt:'now',updatedAt:'now',projectId:'b'}));Scope.select(null);await assert.rejects(DB.put('tasks',{id:'t',createdAt:'now',updatedAt:'now'}));});
+test('closed project blocks new business records',async()=>{Scope.enabled=true;Scope.select('a',true);await assert.rejects(DB.put('expenses',{id:'e',createdAt:'now',updatedAt:'now'}));});
+test('unscoped administrative backup retains records across projects',async()=>{Scope.enabled=true;for(const id of ['a','b']){Scope.select(id);await DB.put('expenses',{id,createdAt:'now',updatedAt:'now'});}assert.equal((await DB.getAllUnscoped('expenses')).length,2);});

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AGB Chantier</string>
+    <string name="title_activity_main">AGB Chantier</string>
+    <string name="package_name">ci.agb.chantier</string>
+    <string name="custom_url_scheme">ci.agb.chantier</string>
+</resources>

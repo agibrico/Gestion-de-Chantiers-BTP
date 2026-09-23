@@ -1,0 +1,38 @@
+name: AGB CHANTIER SaaS CI/CD
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Check TypeScript & Linting
+        run: npm run lint
+
+      - name: Regression tests
+        run: npm test
+
+      - name: Build Production SaaS Web App
+        run: npm run build
+
+      - name: Upload Production Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agb-chantier-saas-dist
+          path: dist/

@@ -1,0 +1,6 @@
+{
+  "name": "AGB CHANTIER — Gestion de Chantiers BTP",
+  "description": "Application professionnelle de gestion, suivi, contrôle et pilotage des chantiers de construction.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

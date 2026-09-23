@@ -1,0 +1,59 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> agb-chantier@0.1.1 check
+> npm run lint && npm test && npm run build
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> agb-chantier@0.1.1 lint
+> tsc --noEmit
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> agb-chantier@0.1.1 test
+> node --import tsx --test tests/*.test.ts
+
+✔ salted passwords verify without exposing plaintext (136.592993ms)
+✔ successful legacy login migrates password; wrong login does not (34.594231ms)
+✔ a suspended account cannot restore a persisted session (1.317949ms)
+✔ first login requires 8 characters and does not auto-verify identity (61.629149ms)
+✔ queue remains pending without a remote connector (5.709782ms)
+✔ failed remote request is retained for retry, then acknowledged (4.578654ms)
+✔ interrupted syncing records can resume (1.659191ms)
+✔ backup retains soft deletion markers (2.183584ms)
+✔ backup read failures are reported instead of empty tables (1.018036ms)
+✔ invalid import is rejected before any mutation (1.228264ms)
+✔ import transaction rolls back on non-cloneable content (1.234108ms)
+✔ valid import merges without deleting existing records (1.056277ms)
+✔ stock cannot go negative and rejected movement leaves no trace (1.294876ms)
+✔ concurrent stock exits cannot oversell (1.68459ms)
+✔ stock rejects invalid quantities and missing item (1.235336ms)
+✔ CSV neutralizes formula cells and escapes quotes (17.444397ms)
+✔ expense rejects invalid amounts (1.487604ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 539.640478
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> agb-chantier@0.1.1 build
+> vite build
+
+vite v6.4.3 building for production...
+transforming...
+✓ 2785 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                     2.93 kB │ gzip:   1.17 kB
+dist/assets/index-Db6iFqZL.css    137.34 kB │ gzip:  18.86 kB
+dist/assets/index-GoHawo6F.js   1,424.60 kB │ gzip: 362.45 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 3.86s
