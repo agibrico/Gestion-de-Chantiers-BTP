@@ -1,15 +1,5 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-
-// Polyfill for Node 20 undici/jsdom WebIDL compatibility
-try {
-  const webidl = require('webidl-conversions');
-  if (webidl && !webidl.util) webidl.util = {};
-  if (webidl && webidl.util && !webidl.util.markAsUncloneable) {
-    webidl.util.markAsUncloneable = (v: any) => v;
-  }
-} catch (e) {}
-
 import {JSDOM} from 'jsdom';
 import {indexedDB} from 'fake-indexeddb';
 import React from 'react';
