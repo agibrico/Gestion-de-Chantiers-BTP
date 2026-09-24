@@ -3,6 +3,11 @@ const Module = require('node:module');
 const originalLoad = Module._load;
 
 Module._load = function (request, parent, isMain) {
+  if (typeof request === 'string' && (request.includes('cachestorage') || request.includes('CacheStorage'))) {
+    return class CacheStorage {
+      constructor() {}
+    };
+  }
   const exports = originalLoad.apply(this, arguments);
   if (request === 'webidl-conversions' || (typeof request === 'string' && request.includes('webidl'))) {
     try {
