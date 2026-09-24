@@ -1,4 +1,19 @@
-// Node 20 undici/jsdom WebIDL compatibility preload via Module._load hook (CommonJS)
+// Node 20 undici/jsdom WebIDL compatibility preload (CommonJS)
+const fs = require('node:fs');
+const path = require('node:path');
+
+// Automatically patch undici's cachestorage.js to comment out markAsUncloneable call if present
+try {
+  const csPath = path.join(__dirname, '../node_modules/undici/lib/web/cache/cachestorage.js');
+  if (fs.existsSync(csPath)) {
+    let content = fs.readFileSync(csPath, 'utf8');
+    if (content.includes('webidl.util.markAsUncloneable')) {
+      content = content.replace('webidl.util.markAsUncloneable(this)', '// webidl.util.markAsUncloneable(this)');
+      fs.writeFileSync(csPath, content, 'utf8');
+    }
+  }
+} catch (e) {}
+
 const Module = require('node:module');
 const originalLoad = Module._load;
 
