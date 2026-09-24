@@ -1,4 +1,4 @@
-// Node 20 undici/jsdom WebIDL compatibility preload via Module._load hook
+// Node 20 undici/jsdom WebIDL compatibility preload via Module._load hook (CommonJS)
 const Module = require('node:module');
 const originalLoad = Module._load;
 
