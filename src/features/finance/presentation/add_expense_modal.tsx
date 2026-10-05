@@ -8,7 +8,7 @@ import { AppTextField } from "../../../core/widgets/inputs/app_text_field";
 import { AppSelect } from "../../../core/widgets/inputs/app_select";
 import { AppButton } from "../../../core/widgets/buttons/app_button";
 import { ExpenseEntity, ExpenseCategory, PaymentMethod } from "../domain/entities/finance_entity";
-import { Coins, Receipt, CreditCard, Building } from "lucide-react";
+import { Coins, Receipt, AlertCircle } from "lucide-react";
 
 interface AddExpenseModalProps {
   isOpen: boolean;
@@ -57,7 +57,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   const [projectId, setProjectId] = useState(defaultProjectId);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<ExpenseCategory>("MATERIAUX");
-  const [amountFCFA, setAmountFCFA] = useState<number>(150000);
+  const [amountFCFA, setAmountFCFA] = useState<number | "">(150000);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("ESPECES_CAISSE");
   const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split("T")[0]);
   const [beneficiary, setBeneficiary] = useState("");
@@ -65,10 +65,23 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   const [lot, setLot] = useState("Gros Œuvre");
   const [comments, setComments] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim() || amountFCFA <= 0 || !beneficiary.trim()) return;
+    setErrorMessage(null);
+
+    const numericAmount = Number(amountFCFA) || 0;
+
+    if (numericAmount <= 0) {
+      setErrorMessage("Veuillez saisir un montant valide et positif en FCFA (ex: 150 000 FCFA).");
+      return;
+    }
+
+    // Si l'objet de la dépense est vide, déduire automatiquement un libellé parlant
+    const categoryLabel = CATEGORY_OPTIONS.find((c) => c.value === category)?.label || "Dépense";
+    const finalTitle = title.trim() || `${categoryLabel}${beneficiary.trim() ? " - " + beneficiary.trim() : ""}`;
+    const finalBeneficiary = beneficiary.trim() || "Fournisseur / Caisse Chantier";
 
     setIsSubmitting(true);
     try {
@@ -78,18 +91,20 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
         projectId,
         projectName: selectedProject ? selectedProject.label : defaultProjectName,
         expenseNumber: `DEP-2026-${randomNum}`,
-        title: title.trim(),
+        title: finalTitle,
         category,
-        amountFCFA: Number(amountFCFA),
+        amountFCFA: numericAmount,
         paymentMethod,
         status: "APPROUVE",
-        expenseDate,
-        beneficiary: beneficiary.trim(),
+        expenseDate: expenseDate || new Date().toISOString().split("T")[0],
+        beneficiary: finalBeneficiary,
         invoiceReference: invoiceReference.trim() || undefined,
         lot: lot.trim() || undefined,
         comments: comments.trim() || undefined,
       });
       onClose();
+    } catch (err: any) {
+      setErrorMessage(err.message || "Erreur lors de l'enregistrement de la dépense.");
     } finally {
       setIsSubmitting(false);
     }
@@ -105,6 +120,13 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       size="lg"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
+        {errorMessage && (
+          <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+            <span>{errorMessage}</span>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <AppSelect
             label="Chantier de destination"
@@ -124,18 +146,18 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
 
         <AppTextField
           label="Libellé / Objet de la dépense"
-          placeholder="Ex: Achat sacs de ciment CPJ 42.5 ou Acompte ferraillage"
+          placeholder="Ex: Achat sacs de ciment CPJ 42.5 (laissé vide = généré automatiquement)"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          required
+          helperText="Ex: Achat ciment, Acompte ferrailleur... (Optionnel si catégorie et bénéficiaire renseignés)"
         />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <AppTextField
-            label="Montant (FCFA)"
+            label="Montant (FCFA) *"
             type="number"
-            value={amountFCFA.toString()}
-            onChange={(e) => setAmountFCFA(Number(e.target.value))}
+            value={amountFCFA === "" ? "" : amountFCFA.toString()}
+            onChange={(e) => setAmountFCFA(e.target.value === "" ? "" : Number(e.target.value))}
             required
             helperText="Montant net TTC décaissé en FCFA"
           />
@@ -155,7 +177,6 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
             placeholder="Ex: CIMIVOIRE ou Équipe Coffrage Yéo"
             value={beneficiary}
             onChange={(e) => setBeneficiary(e.target.value)}
-            required
           />
 
           <AppTextField
