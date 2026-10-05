@@ -46,6 +46,29 @@ test('successful legacy login migrates password; wrong login does not', async ()
   const user = await repo.login('0100000000', 'legacy-pass');
   assert.match(user.passwordHash!, /^pbkdf2\$/);
 });
+test('repeated initialization preserves existing accounts, passwordHash and security flags', async () => {
+  const repo = AuthRepositoryImpl.getInstance();
+  const customHash = await hashPassword('custom-secret-password-2026');
+  await DB.put(DB.STORES.USERS, {
+    ...record('usr_admin_01'),
+    name: 'Admin Personnalisé',
+    phone: '0104818092',
+    role: UserRole.ADMINISTRATEUR,
+    profileCategory: 'ADMINISTRATEUR',
+    passwordHash: customHash,
+    mustChangePassword: false,
+    isFirstLoginCompleted: true,
+    status: 'ACTIVE'
+  });
+
+  await repo.initializeSeedData();
+
+  const admin = await DB.getById<any>(DB.STORES.USERS, 'usr_admin_01');
+  assert.equal(admin.passwordHash, customHash);
+  assert.equal(admin.mustChangePassword, false);
+  assert.equal(admin.isFirstLoginCompleted, true);
+  assert.equal(await verifyPassword('custom-secret-password-2026', admin.passwordHash), true);
+});
 test('a suspended account cannot restore a persisted session', async () => {
   await DB.put(DB.STORES.USERS, {...record('suspended'), status:'SUSPENDED'});
   storage.set('agb_current_user_id', 'suspended');
