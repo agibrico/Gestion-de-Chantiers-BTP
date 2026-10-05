@@ -2,13 +2,16 @@
  * AGB CHANTIER - Modal d'Ajout d'un Engin / Matériel - AXE 12
  */
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { AppModal } from "../../../core/widgets/feedback/app_modal";
 import { AppTextField } from "../../../core/widgets/inputs/app_text_field";
 import { AppSelect } from "../../../core/widgets/inputs/app_select";
 import { AppButton } from "../../../core/widgets/buttons/app_button";
 import { EquipmentEntity, EquipmentCategory, FuelType, EquipmentStatus } from "../domain/entities/equipment_entity";
-import { Wrench, HardHat } from "lucide-react";
+import { ProjectEntity } from "../../projects/domain/entities/project_entity";
+import { ProjectScope } from "../../workspace/project_scope";
+import { IdbAdapter } from "../../../core/storage/idb_adapter";
+import { Wrench } from "lucide-react";
 
 interface AddEquipmentModalProps {
   isOpen: boolean;
@@ -34,14 +37,9 @@ const FUEL_OPTIONS = [
   { value: "MANUEL", label: "Manuel / Non motorisé" },
 ];
 
-const PROJECT_OPTIONS = [
-  { value: "", label: "Aucun chantier (Parc Central Vridi)" },
-  { value: "proj-001", label: "Tour Résidentielle Ivoire - Cocody Riviera" },
-  { value: "proj-002", label: "Complexe Commercial & Bureaux - Plateau" },
-  { value: "proj-003", label: "Hangar Logistique & Stockage - San-Pédro" },
-];
-
 export const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({ isOpen, onClose, onSave }) => {
+  const activeScopeId = ProjectScope.id;
+  const [projectsList, setProjectsList] = useState<ProjectEntity[]>([]);
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [category, setCategory] = useState<EquipmentCategory>("TERRASSEMENT");
@@ -52,19 +50,38 @@ export const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({ isOpen, on
   const [hourMeterCurrent, setHourMeterCurrent] = useState<number>(120);
   const [fuelConsumption, setFuelConsumption] = useState<number>(15);
   const [dailyCostRateFCFA, setDailyCostRateFCFA] = useState<number>(150000);
-  const [projectId, setProjectId] = useState<string>("proj-001");
+  const [projectId, setProjectId] = useState<string>(activeScopeId || "");
   const [assignedOperator, setAssignedOperator] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const loadProjects = async () => {
+      try {
+        const prjs = await IdbAdapter.getAll<ProjectEntity>(IdbAdapter.STORES.PROJECTS);
+        setProjectsList(prjs);
+        if (activeScopeId) {
+          setProjectId(activeScopeId);
+        }
+      } catch (e) {
+        console.warn("Erreur chargement projets engins:", e);
+      }
+    };
+    if (isOpen) {
+      loadProjects();
+    }
+  }, [isOpen, activeScopeId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !brand.trim()) return;
 
+    const targetProjId = activeScopeId || projectId;
+
     setIsSubmitting(true);
     try {
-      const selectedProj = PROJECT_OPTIONS.find((p) => p.value === projectId);
+      const selectedProj = projectsList.find((p) => p.id === targetProjId);
       const generatedCode = code.trim() || `ENG-${brand.substring(0, 3).toUpperCase()}-${Math.floor(10 + Math.random() * 90)}`;
-      const status: EquipmentStatus = projectId ? "EN_SERVICE_CHANTIER" : "DISPONIBLE_PARC";
+      const status: EquipmentStatus = targetProjId ? "EN_SERVICE_CHANTIER" : "DISPONIBLE_PARC";
 
       await onSave({
         code: generatedCode,
@@ -74,8 +91,8 @@ export const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({ isOpen, on
         model: model.trim() || "Modèle Standard",
         serialNumber: serialNumber.trim() || undefined,
         status,
-        currentProjectId: projectId || undefined,
-        currentProjectName: selectedProj && projectId ? selectedProj.label : undefined,
+        currentProjectId: targetProjId || undefined,
+        currentProjectName: selectedProj ? selectedProj.name : undefined,
         assignedOperator: assignedOperator.trim() || undefined,
         fuelType,
         hourMeterCurrent: Number(hourMeterCurrent),
@@ -88,6 +105,11 @@ export const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({ isOpen, on
       setIsSubmitting(false);
     }
   };
+
+  const projectOptions = [
+    { value: "", label: "Aucun chantier (Parc Central Vridi)" },
+    ...projectsList.map((p) => ({ value: p.id, label: `${p.code ? p.code + " - " : ""}${p.name}` })),
+  ];
 
   return (
     <AppModal
@@ -170,9 +192,10 @@ export const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({ isOpen, on
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <AppSelect
             label="Affectation Chantier Initiale"
-            options={PROJECT_OPTIONS}
-            value={projectId}
+            options={projectOptions}
+            value={ProjectScope.id || projectId}
             onChange={(e) => setProjectId(e.target.value)}
+            disabled={!!ProjectScope.id}
           />
 
           <AppTextField

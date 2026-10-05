@@ -13,9 +13,20 @@ const {AuthProvider}=await import('../src/features/auth/presentation/auth_contex
 const {ToastProvider}=await import('../src/core/widgets/feedback/app_toast');
 const {IdbAdapter:DB}=await import('../src/core/storage/idb_adapter');
 const {ProjectScope}=await import('../src/features/workspace/project_scope');
+
 test('user completes wizard and enters an empty, scoped chantier',async()=>{
+ const db = await DB.getDb();
+ await new Promise<void>((resolve, reject) => {
+   const tx = db.transaction(Object.values(DB.STORES), 'readwrite');
+   for (const store of Object.values(DB.STORES)) tx.objectStore(store).clear();
+   tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error);
+ });
+ dom.window.localStorage.clear();
+ ProjectScope.select(null);
+
  await DB.put('users',{id:'owner',name:'Responsable test',phone:'0100000000',role:'ADMINISTRATEUR',profileCategory:'ADMINISTRATEUR',status:'ACTIVE',mustChangePassword:false,isFirstLoginCompleted:true,createdAt:'now',updatedAt:'now'} as any);
- localStorage.setItem('agb_current_user_id','owner');
+ dom.window.localStorage.setItem('agb_current_user_id','owner');
+
  const ui=render(React.createElement(ToastProvider,null,React.createElement(AuthProvider,null,React.createElement(ChantierWorkspace,null,React.createElement('p',null,'Modules du chantier')))));
  await waitFor(()=>assert.ok(ui.queryByText('Créer un chantier / reprendre mon brouillon')));
  fireEvent.click(ui.getByText('Créer un chantier / reprendre mon brouillon'));
@@ -32,6 +43,6 @@ test('user completes wizard and enters an empty, scoped chantier',async()=>{
  await waitFor(()=>assert.ok(ui.queryByText('Résidence test')));
  await waitFor(()=>assert.ok(ProjectScope.id));
  assert.equal((await DB.getAllUnscoped<any>('projects'))[0].totalExpensesRealized,0);
- assert.equal(localStorage.getItem('agb_dossier_owner'),null);
+ assert.equal(dom.window.localStorage.getItem('agb_dossier_owner'),null);
  cleanup();
 });

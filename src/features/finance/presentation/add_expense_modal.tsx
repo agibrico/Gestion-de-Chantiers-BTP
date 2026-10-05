@@ -2,12 +2,15 @@
  * AGB CHANTIER - Modal d'Enregistrement de Dépense / Décaissement - AXE 11
  */
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { AppModal } from "../../../core/widgets/feedback/app_modal";
 import { AppTextField } from "../../../core/widgets/inputs/app_text_field";
 import { AppSelect } from "../../../core/widgets/inputs/app_select";
 import { AppButton } from "../../../core/widgets/buttons/app_button";
 import { ExpenseEntity, ExpenseCategory, PaymentMethod } from "../domain/entities/finance_entity";
+import { ProjectEntity } from "../../projects/domain/entities/project_entity";
+import { ProjectScope } from "../../workspace/project_scope";
+import { IdbAdapter } from "../../../core/storage/idb_adapter";
 import { Coins, Receipt, AlertCircle } from "lucide-react";
 
 interface AddExpenseModalProps {
@@ -40,21 +43,16 @@ const PAYMENT_OPTIONS = [
   { value: "MTN_MOMO", label: "MTN MoMo" },
 ];
 
-const PROJECT_OPTIONS = [
-  { value: "proj-001", label: "Tour Résidentielle Ivoire - Cocody Riviera" },
-  { value: "proj-002", label: "Complexe Commercial & Bureaux - Plateau" },
-  { value: "proj-003", label: "Hangar Logistique & Stockage - San-Pédro" },
-  { value: "proj-004", label: "Résidence Privée Les Manguiers - Assinie" },
-];
-
 export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   isOpen,
   onClose,
   onSave,
   defaultProjectId = "proj-001",
-  defaultProjectName = "Tour Résidentielle Ivoire - Cocody Riviera",
+  defaultProjectName = "Chantier Actif",
 }) => {
-  const [projectId, setProjectId] = useState(defaultProjectId);
+  const activeScopeId = ProjectScope.id;
+  const [projectsList, setProjectsList] = useState<ProjectEntity[]>([]);
+  const [projectId, setProjectId] = useState<string>(activeScopeId || defaultProjectId);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<ExpenseCategory>("MATERIAUX");
   const [amountFCFA, setAmountFCFA] = useState<number | "">(150000);
@@ -67,6 +65,26 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    const loadProjects = async () => {
+      try {
+        const prjs = await IdbAdapter.getAll<ProjectEntity>(IdbAdapter.STORES.PROJECTS);
+        setProjectsList(prjs);
+        const currentActive = ProjectScope.id;
+        if (currentActive) {
+          setProjectId(currentActive);
+        } else if (prjs.length > 0) {
+          setProjectId(prjs[0].id);
+        }
+      } catch (e) {
+        console.warn("Erreur chargement projets pour la dépense:", e);
+      }
+    };
+    if (isOpen) {
+      loadProjects();
+    }
+  }, [isOpen]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
@@ -78,18 +96,24 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       return;
     }
 
-    // Si l'objet de la dépense est vide, déduire automatiquement un libellé parlant
+    // Toujours s'assurer d'utiliser le chantier actif de ProjectScope si présent
+    const targetProjId = ProjectScope.id || projectId || defaultProjectId;
+
+    // Déduire le nom du projet sélectionné
+    const selectedProject = projectsList.find((p) => p.id === targetProjId);
+    const targetProjName = selectedProject?.name || defaultProjectName;
+
+    // Si l'objet de la dépense est vide, déduire automatiquement un libellé
     const categoryLabel = CATEGORY_OPTIONS.find((c) => c.value === category)?.label || "Dépense";
     const finalTitle = title.trim() || `${categoryLabel}${beneficiary.trim() ? " - " + beneficiary.trim() : ""}`;
     const finalBeneficiary = beneficiary.trim() || "Fournisseur / Caisse Chantier";
 
     setIsSubmitting(true);
     try {
-      const selectedProject = PROJECT_OPTIONS.find((p) => p.value === projectId);
       const randomNum = Math.floor(1000 + Math.random() * 9000);
       await onSave({
-        projectId,
-        projectName: selectedProject ? selectedProject.label : defaultProjectName,
+        projectId: targetProjId,
+        projectName: targetProjName,
         expenseNumber: `DEP-2026-${randomNum}`,
         title: finalTitle,
         category,
@@ -109,6 +133,10 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       setIsSubmitting(false);
     }
   };
+
+  const projectOptions = projectsList.length > 0
+    ? projectsList.map((p) => ({ value: p.id, label: `${p.code ? p.code + " - " : ""}${p.name}` }))
+    : [{ value: ProjectScope.id || defaultProjectId, label: defaultProjectName }];
 
   return (
     <AppModal
@@ -130,10 +158,12 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <AppSelect
             label="Chantier de destination"
-            options={PROJECT_OPTIONS}
-            value={projectId}
+            options={projectOptions}
+            value={ProjectScope.id || projectId}
             onChange={(e) => setProjectId(e.target.value)}
             required
+            disabled={!!ProjectScope.id}
+            helperText={ProjectScope.id ? "Chantier actif verrouillé" : undefined}
           />
           <AppSelect
             label="Catégorie budgétaire"
@@ -149,7 +179,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
           placeholder="Ex: Achat sacs de ciment CPJ 42.5 (laissé vide = généré automatiquement)"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          helperText="Ex: Achat ciment, Acompte ferrailleur... (Optionnel si catégorie et bénéficiaire renseignés)"
+          helperText="Ex: Achat ciment, Acompte ferrailleur... (Optionnel)"
         />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
